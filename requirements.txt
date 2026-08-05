@@ -1,0 +1,9 @@
+httpx==0.28.1
+pydantic==2.13.4
+
+# Optional: only for src/tracing_langgraph.py, the LangGraph adapter.
+# src/tracing/ itself is stdlib-only and needs none of this.
+langchain-core==1.5.3
+
+# dev
+pytest==9.1.1

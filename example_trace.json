@@ -1,0 +1,101 @@
+{
+  "schema_version": 2,
+  "producer": "hand-written",
+  "arm": "unknown",
+  "query": "who changed authentication recently?",
+  "answer": "Alice rewrote the auth middleware in PR #1347, which closed issue #42 about expired tokens failing login. The change landed in src/auth/middleware.py.",
+  "started_at": "2026-08-02T10:14:07+00:00",
+  "duration_ms": 412.5,
+  "items": [
+    {
+      "id": "pr:1347",
+      "content": "Rewrite the auth middleware token check. The expiry comparison used < instead of <=, so tokens were rejected one second early. Fixes #42.",
+      "source": "graph",
+      "score": 0.91,
+      "overlap": 0.41,
+      "vector_score": null,
+      "graph_score": null
+    },
+    {
+      "id": "issue:42",
+      "content": "Login fails for tokens that expire exactly on the boundary. Users get logged out a second before their session should end.",
+      "source": "graph",
+      "score": 0.87,
+      "overlap": 0.33,
+      "vector_score": null,
+      "graph_score": null
+    },
+    {
+      "id": "file:src/auth/middleware.py",
+      "content": "def check_token(token): if token.expires_at <= now(): raise TokenExpired()",
+      "source": "graph",
+      "score": 0.72,
+      "overlap": 0.22,
+      "vector_score": null,
+      "graph_score": null
+    },
+    {
+      "id": "person:alice",
+      "content": "alice \u2014 authored 34 pull requests, reviewed 12",
+      "source": "graph",
+      "score": 0.64,
+      "overlap": 0.18,
+      "vector_score": null,
+      "graph_score": null
+    },
+    {
+      "id": "pr:1290",
+      "content": "Bump the auth library from 2.1 to 2.3. No behaviour change, dependency update only.",
+      "source": "vector",
+      "score": 0.58,
+      "overlap": 0.05,
+      "vector_score": null,
+      "graph_score": null
+    },
+    {
+      "id": "commit:6dcb09b",
+      "content": "Fix typo in the authentication README heading.",
+      "source": "vector",
+      "score": 0.51,
+      "overlap": 0.04,
+      "vector_score": null,
+      "graph_score": null
+    },
+    {
+      "id": "issue:88",
+      "content": "Document how to rotate service account credentials for the staging environment.",
+      "source": "vector",
+      "score": 0.44,
+      "overlap": 0.02,
+      "vector_score": null,
+      "graph_score": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "pr:1347",
+      "target": "issue:42",
+      "relation": "RESOLVES",
+      "weight": 0.92
+    },
+    {
+      "source": "person:alice",
+      "target": "pr:1347",
+      "relation": "AUTHORED",
+      "weight": 0.95
+    },
+    {
+      "source": "pr:1347",
+      "target": "file:src/auth/middleware.py",
+      "relation": "TOUCHES",
+      "weight": 0.8
+    },
+    {
+      "source": "person:alice",
+      "target": "issue:42",
+      "relation": "REPORTED",
+      "weight": 0.75
+    }
+  ],
+  "spans": []
+}
