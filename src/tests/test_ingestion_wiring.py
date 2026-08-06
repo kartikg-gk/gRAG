@@ -20,6 +20,8 @@ import pytest
 from src.ingestion import (
     API_ROOT,
     GitHubError,
+    STAGE_CHANGED_FILES,
+    STAGE_REVIEWS,
     collect_by_pull_request,
     fetch_changed_files,
     fetch_commits,
@@ -251,7 +253,10 @@ def ingest(
         commits=fetch_commits(session, "o/r"),
         reviews=review_map,
         changed_files=file_map,
-        enrichment_failures=review_failures + file_failures,
+        enrichment_failures_by_stage={
+            STAGE_REVIEWS: review_failures,
+            STAGE_CHANGED_FILES: file_failures,
+        },
     )
     return builder
 
@@ -644,6 +649,39 @@ def test_enrichment_failures_are_recorded_on_the_graph():
 
 def test_a_clean_run_records_no_enrichment_failures(graph):
     assert graph.stats.enrichment_failures == 0
+    assert sum(graph.stats.enrichment_failures_by_stage.values()) == 0
+
+
+def test_a_review_failure_is_attributed_to_the_review_stage():
+    """A total alone cannot say which hole the run left in the graph."""
+    builder = ingest(fake_github(broken={"/reviews"}))
+
+    assert builder.stats.enrichment_failures_by_stage[STAGE_REVIEWS] == 2
+    assert builder.stats.enrichment_failures_by_stage[STAGE_CHANGED_FILES] == 0
+
+
+def test_a_file_failure_is_attributed_to_the_file_stage():
+    builder = ingest(fake_github(broken={"/files"}))
+
+    assert builder.stats.enrichment_failures_by_stage[STAGE_CHANGED_FILES] == 2
+    assert builder.stats.enrichment_failures_by_stage[STAGE_REVIEWS] == 0
+
+
+def test_the_stage_breakdown_always_sums_to_the_total():
+    """The two are derived from one source, so they cannot drift apart."""
+    for broken in ({"/reviews"}, {"/files"}, {"/reviews", "/files"}, set()):
+        stats = ingest(fake_github(broken=broken)).stats
+        assert sum(stats.enrichment_failures_by_stage.values()) == (
+            stats.enrichment_failures
+        ), f"totals disagree with {broken} broken"
+
+
+def test_the_failure_count_matches_the_number_of_injected_failures():
+    """Two pull requests, both enrichment stages broken, is four failures."""
+    stats = ingest(fake_github(broken={"/reviews", "/files"})).stats
+
+    assert stats.pull_requests == 2
+    assert stats.enrichment_failures == 4
 
 
 # ==========================================================================

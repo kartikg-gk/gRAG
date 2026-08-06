@@ -23,6 +23,12 @@ from .github import GitHubAuthError, GitHubError, GitHubRateLimitError
 
 PerPullRequestFetch = Callable[[httpx.Client, str, int], Iterable[Any]]
 
+#: The enrichment stages, so a failure count can say which hole it left in the
+#: graph. A total alone cannot distinguish a run that lost its reviews from one
+#: that lost its file lists.
+STAGE_REVIEWS = "reviews"
+STAGE_CHANGED_FILES = "changed_files"
+
 
 def is_retryable(error: BaseException) -> bool:
     """Only a server-side failure is worth a second attempt.

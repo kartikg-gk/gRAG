@@ -53,7 +53,7 @@ genericize the schema.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, Mapping
 
@@ -111,6 +111,10 @@ class GraphStats:
     #: that quietly lost a pull request's reviews looks identical to one that
     #: never had any, so the count travels with the graph.
     enrichment_failures: int = 0
+    #: The same failures broken down by the stage they happened in, e.g.
+    #: ``{"reviews": 2}``. A total alone cannot say whether a run lost its
+    #: reviews or its file lists, which are different holes in the graph.
+    enrichment_failures_by_stage: dict[str, int] = field(default_factory=dict)
 
 
 def _node_id(prefix: str, value: Any) -> str:
@@ -159,6 +163,7 @@ class GraphBuilder:
         reviews: Mapping[int, Iterable[Review]] | None = None,
         changed_files: Mapping[int, Iterable[ChangedFile]] | None = None,
         enrichment_failures: int = 0,
+        enrichment_failures_by_stage: Mapping[str, int] | None = None,
     ) -> GraphStats:
         """Add every payload to the graph and report what was created.
 
@@ -171,13 +176,26 @@ class GraphBuilder:
         per-pull-request calls it gave up on. Recording it keeps a partial
         graph distinguishable from a complete one.
 
+        ``enrichment_failures_by_stage`` says where those failures happened.
+        When it is given the total is derived from it, so the two can never
+        disagree.
+
         Closing keywords are collected while items are added and turned into
         ``RESOLVES`` edges at the end, once every node one could point at
         exists. GitHub numbers issues and pull requests from one sequence, so
         resolving a claim early would drop real edges: a pull request closing an
         issue that has not been added yet, or a later pull request.
         """
-        self.stats.enrichment_failures += enrichment_failures
+        if enrichment_failures_by_stage:
+            for stage, count in enrichment_failures_by_stage.items():
+                self.stats.enrichment_failures_by_stage[stage] = (
+                    self.stats.enrichment_failures_by_stage.get(stage, 0) + count
+                )
+            self.stats.enrichment_failures += sum(
+                enrichment_failures_by_stage.values()
+            )
+        else:
+            self.stats.enrichment_failures += enrichment_failures
 
         if repository is not None:
             self._add_repository(repository)

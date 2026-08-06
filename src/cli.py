@@ -24,6 +24,8 @@ import httpx
 
 from .ingestion import (
     GitHubError,
+    STAGE_CHANGED_FILES,
+    STAGE_REVIEWS,
     collect_by_pull_request,
     fetch_changed_files,
     fetch_commits,
@@ -106,7 +108,10 @@ def _ingest(args: argparse.Namespace, session: httpx.Client | None) -> int:
             commits=fetch_commits(session, args.repository, limit=args.commits),
             reviews=reviews,
             changed_files=changed_files,
-            enrichment_failures=review_failures + file_failures,
+            enrichment_failures_by_stage={
+                STAGE_REVIEWS: review_failures,
+                STAGE_CHANGED_FILES: file_failures,
+            },
         )
     except GitHubError as exc:
         print(f"ingest failed: {exc}", file=sys.stderr)
@@ -184,6 +189,10 @@ def _report(repository: str, stats) -> None:
 
     for label, count in (
         ("enrichment calls failed and skipped", stats.enrichment_failures),
+        *(
+            (f"of those, in {stage}", count)
+            for stage, count in sorted(stats.enrichment_failures_by_stage.items())
+        ),
         ("commits with no linked account", stats.commits_without_author),
         ("self-reviews skipped", stats.self_reviews_skipped),
         ("unresolved references", stats.unresolved_references),

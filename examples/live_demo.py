@@ -25,6 +25,8 @@ import httpx
 
 from src.ingestion import (
     GitHubError,
+    STAGE_CHANGED_FILES,
+    STAGE_REVIEWS,
     collect_by_pull_request,
     fetch_changed_files,
     fetch_commits,
@@ -91,7 +93,10 @@ def build_graph(
         commits=fetch_commits(session, repo, limit=commits),
         reviews=review_map,
         changed_files=file_map,
-        enrichment_failures=review_failures + file_failures,
+        enrichment_failures_by_stage={
+            STAGE_REVIEWS: review_failures,
+            STAGE_CHANGED_FILES: file_failures,
+        },
     )
     return builder
 
