@@ -1,14 +1,14 @@
 """LangGraph adapter: observe an agent run and emit a framework-neutral trace.
 
-    from langchain_core.runnables import RunnableLambda
+    from langgraph.graph import StateGraph
     from src.tracing import save
-    from src.tracing_langgraph import LangGraphTracer, capture
+    from src.tracing_langgraph import LangGraphTracer
 
     tracer = LangGraphTracer()
     result = graph.invoke(inputs, config={"callbacks": [tracer]})
 
-    trace = capture(tracer, answer=result["answer"])
-    save(trace, "trace.json")
+    trace = tracer.finish(answer=result["answer"])
+    save(trace)
 
 **Pure observation.** Nothing here changes what the agent does. Callback
 failures are swallowed by LangChain rather than propagated (``raise_error`` is
@@ -21,42 +21,74 @@ adapter needs ``langchain-core``, so keeping it a sibling means installing the
 adapter is opt-in and the core schema stays dependency-free.
 
 **Nothing LangChain-shaped survives into the output.** Documents, LLM results
-and errors are converted to plain dicts and strings the moment they arrive, so
-a trace written from a LangGraph run is indistinguishable from one written by
-any other producer. That is what makes the schema framework-neutral rather than
-merely framework-agnostic in name.
+and errors are converted to plain data the moment they arrive, so a trace
+written from a LangGraph run is indistinguishable from one written by any other
+producer.
 
-Only ``langchain_core`` is imported, and only its abstract callback interface,
-so this will not fight whatever LangChain version the host application pins.
+**Framework internals are filtered out of the span list.** LangGraph wraps user
+nodes in ``RunnableSequence``, ``ChannelWrite`` and friends; recording those
+would bury the three steps someone actually wrote under a dozen they did not.
+Only chains that LangGraph itself labels as a node are kept.
 """
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import Any, Sequence
+from typing import Any, Final, Sequence
 from uuid import UUID
 
 from langchain_core.callbacks.base import BaseCallbackHandler
 
 from src.tracing import (
-    KIND_CHAIN,
+    ARM_GRAPH,
+    ARM_VECTOR,
+    KIND_DOCUMENT,
     KIND_LLM,
     KIND_RETRIEVER,
     KIND_TOOL,
+    PRODUCER_UNKNOWN,
     STATUS_ERROR,
     STATUS_OK,
-    STATUS_RUNNING,
+    Retrieval,
     Span,
     Trace,
+    TraceEdge,
+    TraceItem,
 )
-from src.tracing import capture as capture_trace
+
+#: The span kind for a user-defined LangGraph node.
+KIND_NODE = "node"
 
 #: Metadata keys a retriever might use for a relevance score, in priority order.
-SCORE_KEYS = ("score", "relevance_score", "similarity", "_score", "vector_score")
+SCORE_KEYS: Final[tuple[str, ...]] = (
+    "score",
+    "relevance_score",
+    "similarity",
+    "_score",
+    "vector_score",
+)
 
 #: Chain input keys that commonly hold the user's question.
-QUERY_KEYS = ("query", "question", "input", "text")
+QUERY_KEYS: Final[tuple[str, ...]] = ("query", "question", "input", "text")
+
+#: LangGraph's own plumbing. These are runnables the framework creates, not
+#: steps anyone wrote, and recording them buries the real ones.
+NOISE_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "LangGraph",
+        "RunnableSequence",
+        "RunnableCallable",
+        "RunnableLambda",
+        "ChannelWrite",
+        "ChannelRead",
+        "_write",
+        "_route",
+        "__start__",
+        "__end__",
+    }
+)
 
 DEFAULT_SOURCE = "retriever"
 
@@ -70,35 +102,83 @@ def _score_of(metadata: dict) -> float | None:
     return None
 
 
-def _item_from_document(document: Any, index: int) -> dict:
-    """Convert one LangChain ``Document`` into a plain trace item.
+def _document_id(document: Any, index: int) -> str:
+    """A stable identifier for a retrieved document.
 
-    Falls back to a positional id so a retriever that carries no metadata still
-    produces a usable trace rather than colliding every document onto one id.
+    Falls back to a hash of the content rather than a positional id: the same
+    document retrieved twice in one run, or across two runs, must land on the
+    same id, and position does not survive a reordering.
     """
-    metadata = dict(getattr(document, "metadata", None) or {})
-    identifier = metadata.get("id") or metadata.get("source") or f"doc:{index}"
+    metadata = getattr(document, "metadata", None) or {}
+    for key in ("id", "node_id", "doc_id"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
 
-    return {
-        "id": str(identifier),
-        "content": getattr(document, "page_content", "") or "",
-        "source": str(metadata.get("source_type") or DEFAULT_SOURCE),
-        "score": _score_of(metadata),
+    identifier = getattr(document, "id", None)
+    if identifier:
+        return str(identifier)
+
+    content = getattr(document, "page_content", "") or ""
+    if content:
+        digest = hashlib.sha1(content.encode("utf-8")).hexdigest()[:10]
+        return f"doc_{digest}"
+
+    return f"doc:{index}"
+
+
+def _item_from_document(document: Any, index: int) -> TraceItem:
+    """Convert one LangChain ``Document`` into a framework-neutral item."""
+    metadata = dict(getattr(document, "metadata", None) or {})
+    item_id = _document_id(document, index)
+    score = _score_of(metadata)
+
+    # Only scalars survive into the trace: a metadata value holding a framework
+    # object would make the trace unserializable and leak LangChain into it.
+    carried = {
+        key: value
+        for key, value in metadata.items()
+        if key != "edges" and isinstance(value, (str, int, float, bool))
     }
 
+    return TraceItem(
+        id=item_id,
+        content=getattr(document, "page_content", "") or "",
+        source=str(metadata.get("source_type") or DEFAULT_SOURCE),
+        label=str(metadata.get("label") or metadata.get("title") or item_id),
+        kind=str(metadata.get("kind") or metadata.get("type") or KIND_DOCUMENT),
+        source_uri=metadata.get("source") or metadata.get("source_uri"),
+        score=score,
+        vector_score=score,
+        metadata=carried,
+    )
 
-def _edges_from_document(document: Any) -> list[dict]:
+
+def _edges_from_document(document: Any) -> list[TraceEdge]:
     """Relations a retriever attached to a document, if it knows any."""
     metadata = getattr(document, "metadata", None) or {}
     edges = metadata.get("edges")
     if not isinstance(edges, (list, tuple)):
         return []
 
-    return [
-        dict(edge)
-        for edge in edges
-        if isinstance(edge, dict) and {"source", "target", "type"} <= set(edge)
-    ]
+    converted: list[TraceEdge] = []
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = edge.get("source")
+        target = edge.get("target")
+        relation = edge.get("relation") or edge.get("type")
+        if not source or not target or not relation:
+            continue
+        converted.append(
+            TraceEdge(
+                source=str(source),
+                target=str(target),
+                relation=str(relation),
+                weight=edge.get("weight", edge.get("confidence")),
+            )
+        )
+    return converted
 
 
 def _text_of_response(response: Any) -> str | None:
@@ -107,8 +187,8 @@ def _text_of_response(response: Any) -> str | None:
     if not generations:
         return None
 
-    for batch in generations:
-        for generation in batch:
+    for batch in reversed(list(generations)):
+        for generation in reversed(list(batch)):
             text = getattr(generation, "text", None)
             if text:
                 return text
@@ -116,31 +196,6 @@ def _text_of_response(response: Any) -> str | None:
             content = getattr(message, "content", None)
             if isinstance(content, str) and content:
                 return content
-    return None
-
-
-def _name_of(serialized: dict[str, Any] | None, kwargs: dict[str, Any]) -> str | None:
-    """The runnable's name.
-
-    langchain-core passes ``name`` as a keyword and leaves ``serialized`` as
-    ``None``; older versions put it inside ``serialized``. Both are read so the
-    adapter does not silently record nothing against a version it did not
-    expect.
-    """
-    name = kwargs.get("name")
-    if isinstance(name, str) and name:
-        return name
-
-    serialized = serialized or {}
-    name = serialized.get("name")
-    if isinstance(name, str) and name:
-        return name
-
-    identifier = serialized.get("id")
-    if isinstance(identifier, (list, tuple)) and identifier:
-        return str(identifier[-1])
-    if isinstance(identifier, str) and identifier:
-        return identifier
     return None
 
 
@@ -157,94 +212,118 @@ def _query_from_inputs(inputs: Any) -> str | None:
     return None
 
 
+def _name_of(
+    serialized: dict[str, Any] | None,
+    metadata: dict[str, Any] | None,
+    kwargs: dict[str, Any],
+    fallback: str,
+) -> str:
+    """The runnable's name.
+
+    langchain-core passes ``name`` as a keyword and leaves ``serialized`` as
+    ``None``; older versions put it inside ``serialized``. Both are read so the
+    adapter does not silently record nothing against a version it did not
+    expect.
+    """
+    name = kwargs.get("name")
+    if isinstance(name, str) and name:
+        return name
+
+    serialized = serialized or {}
+    for candidate in (serialized.get("name"), (metadata or {}).get("langgraph_node")):
+        if isinstance(candidate, str) and candidate:
+            return candidate
+
+    identifier = serialized.get("id")
+    if isinstance(identifier, (list, tuple)) and identifier:
+        return str(identifier[-1])
+    if isinstance(identifier, str) and identifier:
+        return identifier
+    return fallback
+
+
 class LangGraphTracer(BaseCallbackHandler):
-    """Records what an agent retrieved and what it answered.
+    """Collect spans and retrieval information from a LangGraph run.
 
     Attach it to a run and read the result afterwards::
 
         tracer = LangGraphTracer()
         graph.invoke(inputs, config={"callbacks": [tracer]})
-        trace = capture(tracer)
+        trace = tracer.finish()
 
-    A retriever's query wins over a chain's inputs when both are seen, because
-    the retriever was asked something specific while a chain's inputs may be
-    the whole agent state.
-
-    Documents are de-duplicated by id, keeping the first. A document retrieved
-    twice is one document that was available to the answer, and showing it
-    twice would make the used-versus-ignored count read wrong.
+    Nesting comes from LangChain's own ``run_id``/``parent_run_id`` rather than
+    from a stack of whatever is currently open. Runs can interleave — two
+    retrievals in flight at once, or an async branch — and a stack would attach
+    a span to whichever sibling happened to open last.
     """
 
     #: Never let a tracer bug break the run it is watching.
     raise_error = False
 
-    def __init__(self) -> None:
-        self.query: str | None = None
-        self.answer: str | None = None
-        self.items: list[dict] = []
-        self.edges: list[dict] = []
-        self.errors: list[dict] = []
+    def __init__(self, *, producer: str = "langgraph") -> None:
+        super().__init__()
+
+        self.producer = producer
+        self.started_at = datetime.now(timezone.utc)
+        self._began = perf_counter()
+
         self.spans: list[Span] = []
-        self.started_at: datetime | None = None
-        self.duration_ms: float | None = None
-        self.chains: list[str] = []
-        self.tools: list[str] = []
+        self.retrievals: list[Retrieval] = []
+        self.errors: list[dict] = []
 
-        self._seen_item_ids: set[str] = set()
-        self._seen_edges: set[tuple[str, str, str]] = set()
         self._spans_by_run: dict[str, Span] = {}
-        self._began: float | None = None
+        self._retrieval_by_run: dict[str, Retrieval] = {}
+        # Groups opened but not yet closed, so a hook called without a
+        # run_id can still find the one it belongs to.
+        self._open_retrievals: list[Retrieval] = []
+        # Runnables filtered as framework noise, mapped to the nearest ancestor
+        # that was kept, so their children do not lose their place in the tree.
+        self._skipped_parents: dict[str, str | None] = {}
+        self._first_query: str | None = None
+        self._last_llm_text: str | None = None
 
-    # -- lifecycle ---------------------------------------------------------
+    # -- timing ------------------------------------------------------------
 
-    def _mark_start(self) -> None:
-        if self.started_at is None:
-            self.started_at = datetime.now(timezone.utc)
-            self._began = perf_counter()
-
-    def _elapsed_ms(self) -> float:
-        if self._began is None:
-            return 0.0
+    def _now_ms(self) -> float:
         return round((perf_counter() - self._began) * 1000, 3)
-
-    def _mark_end(self) -> None:
-        if self._began is not None:
-            self.duration_ms = round((perf_counter() - self._began) * 1000, 1)
 
     # -- spans -------------------------------------------------------------
 
     def _open_span(
         self,
-        name: str,
-        kind: str,
         run_id: UUID | None,
         parent_run_id: UUID | None,
+        name: str,
+        kind: str,
     ) -> Span:
         """Start recording a unit of work.
 
-        Nesting comes from LangChain's own ``run_id``/``parent_run_id`` rather
-        than from a stack of whatever is currently open. Runs can interleave —
-        two retrievals in flight at once, or an async branch — and a stack
-        would attach a span to whichever sibling happened to open last.
-
-        A ``parent_run_id`` for a run this tracer never saw start (attaching
-        mid-tree) records no parent rather than a dangling reference.
+        A ``parent_run_id`` for a run this tracer never saw start — because the
+        parent was filtered as framework noise, or because the tracer attached
+        mid-tree — is resolved to the nearest ancestor that *was* recorded, so
+        a user node under a ``RunnableSequence`` still reports the node above
+        it rather than losing its place in the tree.
         """
-        self._mark_start()
         span_id = str(run_id) if run_id is not None else f"span-{len(self.spans) + 1}"
-        parent = str(parent_run_id) if parent_run_id is not None else None
-
         span = Span(
             id=span_id,
             name=name,
             kind=kind,
-            parent_id=parent if parent in self._spans_by_run else None,
-            start_ms=self._elapsed_ms(),
-            status=STATUS_RUNNING,
+            parent_id=self._nearest_recorded_ancestor(parent_run_id),
+            start_ms=self._now_ms(),
         )
         self.spans.append(span)
         self._spans_by_run[span_id] = span
         return span
+
+    def _nearest_recorded_ancestor(self, parent_run_id: UUID | None) -> str | None:
+        """The closest ancestor that survived filtering, if any."""
+        if parent_run_id is None:
+            return None
+        parent = str(parent_run_id)
+        if parent in self._spans_by_run:
+            return parent
+        return self._skipped_parents.get(parent)
 
     def _close_span(
         self,
@@ -252,7 +331,7 @@ class LangGraphTracer(BaseCallbackHandler):
         status: str,
         *,
         name: str = "unknown",
-        kind: str = KIND_CHAIN,
+        kind: str = KIND_NODE,
     ) -> Span:
         """Finish a unit of work.
 
@@ -263,17 +342,17 @@ class LangGraphTracer(BaseCallbackHandler):
         """
         span = self._spans_by_run.get(str(run_id)) if run_id is not None else None
         if span is None:
-            span = self._open_span(name, kind, run_id, None)
+            if run_id is not None and str(run_id) in self._skipped_parents:
+                # A filtered runnable ending is not a unit of work.
+                return Span(id="", name=name, kind=kind, status=status)
+            span = self._open_span(run_id, None, name, kind)
 
-        span.end_ms = self._elapsed_ms()
+        span.end_ms = self._now_ms()
         span.status = status
         return span
 
     def _record_error(
-        self,
-        phase: str,
-        error: BaseException,
-        run_id: UUID | None = None,
+        self, phase: str, error: BaseException, run_id: UUID | None = None
     ) -> None:
         """Close the failed unit with error status and keep it in the trace.
 
@@ -282,43 +361,49 @@ class LangGraphTracer(BaseCallbackHandler):
         ``status="error"``. ``tracer.errors`` carries the message as well,
         since the schema has nowhere to put exception text.
         """
-        self._mark_end()
         self._close_span(run_id, STATUS_ERROR, name=phase, kind=phase)
         self.errors.append({"phase": phase, "error": f"{type(error).__name__}: {error}"})
 
-    # -- chain -------------------------------------------------------------
+    # -- chain / LangGraph nodes -------------------------------------------
 
     def on_chain_start(
         self,
         serialized: dict[str, Any] | None,
-        inputs: dict[str, Any],
+        inputs: Any,
         *,
         run_id: UUID | None = None,
         parent_run_id: UUID | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        name = _name_of(serialized, kwargs) or "chain"
-        self._open_span(name, KIND_CHAIN, run_id, parent_run_id)
-        self.chains.append(name)
-        if self.query is None:
-            self.query = _query_from_inputs(inputs)
+        if self._first_query is None:
+            self._first_query = _query_from_inputs(inputs)
+
+        name = _name_of(serialized, metadata, kwargs, "chain")
+        node = (metadata or {}).get("langgraph_node")
+
+        # Only user-defined LangGraph nodes become spans. Everything else is
+        # framework plumbing; it is remembered only so its children can find
+        # the real ancestor above it.
+        if node is None or name in NOISE_NAMES or name != node:
+            if run_id is not None:
+                self._skipped_parents[str(run_id)] = self._nearest_recorded_ancestor(
+                    parent_run_id
+                )
+            return
+
+        self._open_span(run_id, parent_run_id, name, KIND_NODE)
 
     def on_chain_end(
         self,
-        outputs: dict[str, Any],
+        outputs: Any,
         *,
         run_id: UUID | None = None,
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        self._mark_end()
-        self._close_span(run_id, STATUS_OK, name="chain", kind=KIND_CHAIN)
-        if self.answer is None and isinstance(outputs, dict):
-            for key in ("answer", "output", "result", "text"):
-                value = outputs.get(key)
-                if isinstance(value, str) and value:
-                    self.answer = value
-                    break
+        self._close_span(run_id, STATUS_OK, name="chain", kind=KIND_NODE)
 
     def on_chain_error(
         self,
@@ -328,7 +413,7 @@ class LangGraphTracer(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        self._record_error(KIND_CHAIN, error, run_id)
+        self._record_error(KIND_NODE, error, run_id)
 
     # -- retriever ---------------------------------------------------------
 
@@ -339,16 +424,26 @@ class LangGraphTracer(BaseCallbackHandler):
         *,
         run_id: UUID | None = None,
         parent_run_id: UUID | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        self._open_span(
-            _name_of(serialized, kwargs) or "retriever",
-            KIND_RETRIEVER,
+        if query:
+            self._first_query = query
+
+        span = self._open_span(
             run_id,
             parent_run_id,
+            _name_of(serialized, metadata, kwargs, "retriever"),
+            KIND_RETRIEVER,
         )
-        if query:
-            self.query = query
+
+        # One retriever call is one retrieval group, so a run with two
+        # retrievers keeps their results separable.
+        retrieval = Retrieval(query=query or "", span_id=span.id)
+        self.retrievals.append(retrieval)
+        self._retrieval_by_run[span.id] = retrieval
+        self._open_retrievals.append(retrieval)
 
     def on_retriever_end(
         self,
@@ -358,19 +453,41 @@ class LangGraphTracer(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        self._mark_end()
         self._close_span(run_id, STATUS_OK, name="retriever", kind=KIND_RETRIEVER)
-        for document in documents or ():
-            item = _item_from_document(document, len(self.items))
-            if item["id"] not in self._seen_item_ids:
-                self._seen_item_ids.add(item["id"])
-                self.items.append(item)
+
+        retrieval = self._retrieval_by_run.get(str(run_id))
+        if retrieval is None and run_id is None and self._open_retrievals:
+            # Hooks called by hand carry no run_id, so the start cannot be
+            # matched by key. The most recently opened group is the only one it
+            # could belong to. A real run always has a run_id and never lands
+            # here.
+            retrieval = self._open_retrievals[-1]
+        if retrieval is None:
+            retrieval = Retrieval(query=self._first_query or "", span_id=str(run_id))
+            self.retrievals.append(retrieval)
+        if retrieval in self._open_retrievals:
+            self._open_retrievals.remove(retrieval)
+
+        seen_items: set[str] = {item.id for item in retrieval.items}
+        seen_edges: set[tuple[str, str, str]] = {
+            (edge.source, edge.relation, edge.target) for edge in retrieval.edges
+        }
+
+        for index, document in enumerate(documents or ()):
+            item = _item_from_document(document, len(retrieval.items) + index)
+            if item.id not in seen_items:
+                seen_items.add(item.id)
+                retrieval.items.append(item)
 
             for edge in _edges_from_document(document):
-                key = (edge["source"], edge["type"], edge["target"])
-                if key not in self._seen_edges:
-                    self._seen_edges.add(key)
-                    self.edges.append(edge)
+                key = (edge.source, edge.relation, edge.target)
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    retrieval.edges.append(edge)
+
+        # A retriever that reported relations was walking a graph; one that
+        # reported only similarity was not.
+        retrieval.arm = ARM_GRAPH if retrieval.edges else ARM_VECTOR
 
     def on_retriever_error(
         self,
@@ -391,10 +508,12 @@ class LangGraphTracer(BaseCallbackHandler):
         *,
         run_id: UUID | None = None,
         parent_run_id: UUID | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         self._open_span(
-            _name_of(serialized, kwargs) or "llm", KIND_LLM, run_id, parent_run_id
+            run_id, parent_run_id, _name_of(serialized, metadata, kwargs, "llm"), KIND_LLM
         )
 
     def on_llm_end(
@@ -405,11 +524,10 @@ class LangGraphTracer(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        self._mark_end()
         self._close_span(run_id, STATUS_OK, name="llm", kind=KIND_LLM)
         text = _text_of_response(response)
         if text:
-            self.answer = text
+            self._last_llm_text = text
 
     def on_llm_error(
         self,
@@ -430,11 +548,16 @@ class LangGraphTracer(BaseCallbackHandler):
         *,
         run_id: UUID | None = None,
         parent_run_id: UUID | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        name = _name_of(serialized, kwargs) or "tool"
-        self._open_span(name, KIND_TOOL, run_id, parent_run_id)
-        self.tools.append(name)
+        self._open_span(
+            run_id,
+            parent_run_id,
+            _name_of(serialized, metadata, kwargs, "tool"),
+            KIND_TOOL,
+        )
 
     def on_tool_end(
         self,
@@ -444,7 +567,6 @@ class LangGraphTracer(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        self._mark_end()
         self._close_span(run_id, STATUS_OK, name="tool", kind=KIND_TOOL)
 
     def on_tool_error(
@@ -457,29 +579,36 @@ class LangGraphTracer(BaseCallbackHandler):
     ) -> None:
         self._record_error(KIND_TOOL, error, run_id)
 
+    # -- the finished trace ------------------------------------------------
 
-def capture(
-    tracer: LangGraphTracer,
-    *,
-    query: str | None = None,
-    answer: str | None = None,
-) -> Trace:
-    """Build a trace from what the tracer observed.
+    def finish(
+        self, query: str | None = None, answer: str | None = None
+    ) -> Trace:
+        """Build the project's ``Trace`` from what was observed.
 
-    ``query`` and ``answer`` override what was seen, for the common case where
-    the caller holds a cleaner version than the callbacks could infer — an
-    agent's final answer often lives in the invoke result rather than in the
-    last LLM call.
+        Both arguments are optional. ``query`` falls back to the first one
+        seen — the earliest is the question actually asked, before any
+        rewriting. ``answer`` falls back to the last text generated, since a
+        later generation supersedes an earlier one.
 
-    Delegates to the same ``capture`` every other producer uses, so a
-    LangGraph-sourced trace is built by exactly the same code path.
-    """
-    return capture_trace(
-        query if query is not None else (tracer.query or ""),
-        tracer.items,
-        answer if answer is not None else tracer.answer,
-        edges=tracer.edges,
-        spans=tracer.spans,
-        started_at=tracer.started_at,
-        duration_ms=tracer.duration_ms,
-    )
+        Overlap is deliberately *not* measured here. Scoring is
+        ``classify.score_overlaps``, and duplicating it would make two places
+        able to disagree about what a measurement means.
+        """
+        for span in self.spans:
+            if span.end_ms is None:
+                span.end_ms = self._now_ms()
+                if span.status == "running":
+                    span.status = STATUS_OK
+
+        latency = max((span.end_ms or 0.0 for span in self.spans), default=None)
+
+        return Trace(
+            query=query if query is not None else (self._first_query or ""),
+            answer=answer if answer is not None else self._last_llm_text,
+            producer=self.producer or PRODUCER_UNKNOWN,
+            started_at=self.started_at,
+            duration_ms=latency,
+            retrievals=list(self.retrievals),
+            spans=list(self.spans),
+        )

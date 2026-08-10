@@ -1,94 +1,128 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "producer": "unknown",
-  "arm": "unknown",
   "query": "who changed the authentication token expiry and the payment webhook recently?",
   "answer": "The most relevant records are commit:a1b2c3d (Tighten the authentication token expiry comparison); pr:101 (Reject expired authentication tokens on refresh); ticket:12 (Authentication session expires one second early).",
   "started_at": "2024-09-01T12:00:00+00:00",
   "duration_ms": null,
-  "items": [
+  "retrievals": [
     {
-      "id": "commit:a1b2c3d",
-      "content": "Tighten the authentication token expiry comparison",
-      "source": "graph",
-      "score": 0.4286,
-      "vector_score": null,
-      "graph_score": null,
-      "overlap": 0.25
-    },
-    {
-      "id": "pr:102",
-      "content": "Retry the payment webhook on transient failures",
-      "source": "graph",
-      "score": 0.2857,
-      "vector_score": null,
-      "graph_score": null,
-      "overlap": 0.0
-    },
-    {
-      "id": "ticket:13",
-      "content": "Webhook retries flood the payment queue",
-      "source": "graph",
-      "score": 0.2857,
-      "vector_score": null,
-      "graph_score": null,
-      "overlap": 0.0
-    },
-    {
-      "id": "commit:e4f5a6b",
-      "content": "Add webhook retry backoff",
-      "source": "graph",
-      "score": 0.1429,
-      "vector_score": null,
-      "graph_score": null,
-      "overlap": 0.0
-    },
-    {
-      "id": "file:src/billing/webhook.py",
-      "content": "src/billing/webhook.py",
-      "source": "graph",
-      "score": 0.1429,
-      "vector_score": null,
-      "graph_score": null,
-      "overlap": 0.0
-    },
-    {
-      "id": "pr:101",
-      "content": "Reject expired authentication tokens on refresh",
-      "source": "graph",
-      "score": 0.1429,
-      "vector_score": null,
-      "graph_score": null,
-      "overlap": 0.25
-    },
-    {
-      "id": "ticket:12",
-      "content": "Authentication session expires one second early",
-      "source": "graph",
-      "score": 0.1429,
-      "vector_score": null,
-      "graph_score": null,
-      "overlap": 0.3
-    }
-  ],
-  "edges": [
-    {
-      "source": "pr:102",
-      "target": "file:src/billing/webhook.py",
-      "relation": "TOUCHES",
-      "weight": 0.8
-    },
-    {
-      "source": "pr:101",
-      "target": "ticket:12",
-      "relation": "RESOLVES",
-      "weight": 0.92
-    },
-    {
-      "source": "pr:102",
-      "target": "ticket:13",
-      "relation": "RESOLVES",
-      "weight": 0.92
+      "query": "who changed the authentication token expiry and the payment webhook recently?",
+      "span_id": null,
+      "arm": "unknown",
+      "items": [
+        {
+          "id": "commit:a1b2c3d",
+          "label": null,
+          "kind": "document",
+          "content": "Tighten the authentication token expiry comparison",
+          "source": "graph",
+          "source_uri": null,
+          "score": 0.4286,
+          "vector_score": null,
+          "graph_score": null,
+          "overlap": 0.25,
+          "metadata": {}
+        },
+        {
+          "id": "pr:102",
+          "label": null,
+          "kind": "document",
+          "content": "Retry the payment webhook on transient failures",
+          "source": "graph",
+          "source_uri": null,
+          "score": 0.2857,
+          "vector_score": null,
+          "graph_score": null,
+          "overlap": 0.0,
+          "metadata": {}
+        },
+        {
+          "id": "ticket:13",
+          "label": null,
+          "kind": "document",
+          "content": "Webhook retries flood the payment queue",
+          "source": "graph",
+          "source_uri": null,
+          "score": 0.2857,
+          "vector_score": null,
+          "graph_score": null,
+          "overlap": 0.0,
+          "metadata": {}
+        },
+        {
+          "id": "commit:e4f5a6b",
+          "label": null,
+          "kind": "document",
+          "content": "Add webhook retry backoff",
+          "source": "graph",
+          "source_uri": null,
+          "score": 0.1429,
+          "vector_score": null,
+          "graph_score": null,
+          "overlap": 0.0,
+          "metadata": {}
+        },
+        {
+          "id": "file:src/billing/webhook.py",
+          "label": null,
+          "kind": "document",
+          "content": "src/billing/webhook.py",
+          "source": "graph",
+          "source_uri": null,
+          "score": 0.1429,
+          "vector_score": null,
+          "graph_score": null,
+          "overlap": 0.0,
+          "metadata": {}
+        },
+        {
+          "id": "pr:101",
+          "label": null,
+          "kind": "document",
+          "content": "Reject expired authentication tokens on refresh",
+          "source": "graph",
+          "source_uri": null,
+          "score": 0.1429,
+          "vector_score": null,
+          "graph_score": null,
+          "overlap": 0.25,
+          "metadata": {}
+        },
+        {
+          "id": "ticket:12",
+          "label": null,
+          "kind": "document",
+          "content": "Authentication session expires one second early",
+          "source": "graph",
+          "source_uri": null,
+          "score": 0.1429,
+          "vector_score": null,
+          "graph_score": null,
+          "overlap": 0.3,
+          "metadata": {}
+        }
+      ],
+      "edges": [
+        {
+          "source": "pr:102",
+          "target": "file:src/billing/webhook.py",
+          "relation": "TOUCHES",
+          "weight": 0.8
+        },
+        {
+          "source": "pr:101",
+          "target": "ticket:12",
+          "relation": "RESOLVES",
+          "weight": 0.92
+        },
+        {
+          "source": "pr:102",
+          "target": "ticket:13",
+          "relation": "RESOLVES",
+          "weight": 0.92
+        }
+      ]
     }
   ],
   "spans": []

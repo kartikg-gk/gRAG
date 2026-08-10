@@ -23,9 +23,11 @@ from typing import Any, Iterable, Iterator, Mapping
 
 from .schema import (
     ARM_UNKNOWN,
+    KIND_DOCUMENT,
     PRODUCER_UNKNOWN,
     STATUS_ERROR,
     STATUS_OK,
+    Retrieval,
     Span,
     Trace,
     TraceEdge,
@@ -48,18 +50,26 @@ def _as_item(item: TraceItem | Mapping[str, Any]) -> TraceItem:
             id=item.id,
             content=item.content,
             source=item.source,
+            label=item.label,
+            kind=item.kind,
+            source_uri=item.source_uri,
             score=item.score,
             vector_score=item.vector_score,
             graph_score=item.graph_score,
             overlap=item.overlap,
+            metadata=dict(item.metadata),
         )
     return TraceItem(
         id=item["id"],
         content=item["content"],
         source=item.get("source", UNKNOWN_SOURCE),
+        label=item.get("label"),
+        kind=item.get("kind", KIND_DOCUMENT),
+        source_uri=item.get("source_uri"),
         score=item.get("score"),
         vector_score=item.get("vector_score"),
         graph_score=item.get("graph_score"),
+        metadata=dict(item.get("metadata") or {}),
     )
 
 
@@ -106,15 +116,23 @@ def capture(
     Timing is passed in rather than measured here, because only the caller
     knows where the work started and stopped.
     """
+    collected = [_as_item(item) for item in retrieved_items]
+    related = [_as_edge(edge) for edge in edges]
+
     return Trace(
         query=query,
         answer=answer,
         producer=producer,
-        arm=arm,
         started_at=started_at,
         duration_ms=duration_ms,
-        items=[_as_item(item) for item in retrieved_items],
-        edges=[_as_edge(edge) for edge in edges],
+        # One producer handing over one flat list is one retrieval. Grouping is
+        # for runs where more than one retriever ran; this shape does not
+        # pretend to know about a split that never happened.
+        retrievals=(
+            [Retrieval(query=query, arm=arm, items=collected, edges=related)]
+            if collected or related
+            else []
+        ),
         spans=list(spans),
     )
 
@@ -139,9 +157,9 @@ class Recorder:
         self.arm = arm
         self.queries: list[str] = []
         self.answers: list[str] = []
-        self.items: list[TraceItem] = []
-        self.edges: list[TraceEdge] = []
+        self.retrievals: list[Retrieval] = []
         self.spans: list[Span] = []
+        self._default: Retrieval | None = None
 
         self.started_at = datetime.now(timezone.utc)
         self._began = perf_counter()
@@ -163,15 +181,55 @@ class Recorder:
         if answer:
             self.answers.append(answer)
 
+    def record_retrieval(
+        self,
+        items: Iterable[TraceItem | Mapping[str, Any]] = (),
+        *,
+        query: str = "",
+        arm: str | None = None,
+        span_id: str | None = None,
+        edges: Iterable[TraceEdge | Mapping[str, Any]] = (),
+    ) -> Retrieval:
+        """Record one retriever call as its own group.
+
+        Use this when more than one retriever runs: a flat list cannot say that
+        the graph arm returned these and the vector arm those.
+        """
+        retrieval = Retrieval(
+            query=query or (self.queries[0] if self.queries else ""),
+            span_id=span_id or (self._open[-1] if self._open else None),
+            arm=arm if arm is not None else self.arm,
+            items=[_as_item(item) for item in items],
+            edges=[_as_edge(edge) for edge in edges],
+        )
+        self.retrievals.append(retrieval)
+        return retrieval
+
+    def _default_retrieval(self) -> Retrieval:
+        """The catch-all group, for callers that never named a retriever."""
+        if self._default is None:
+            self._default = self.record_retrieval()
+        return self._default
+
     def record_items(
         self, items: Iterable[TraceItem | Mapping[str, Any]]
     ) -> None:
-        self.items.extend(_as_item(item) for item in items)
+        self._default_retrieval().items.extend(_as_item(item) for item in items)
 
     def record_edges(
         self, edges: Iterable[TraceEdge | Mapping[str, Any]]
     ) -> None:
-        self.edges.extend(_as_edge(edge) for edge in edges)
+        self._default_retrieval().edges.extend(_as_edge(edge) for edge in edges)
+
+    @property
+    def items(self) -> list[TraceItem]:
+        """Every item recorded so far, across retrievals."""
+        return [item for retrieval in self.retrievals for item in retrieval.items]
+
+    @property
+    def edges(self) -> list[TraceEdge]:
+        """Every relation recorded so far, across retrievals."""
+        return [edge for retrieval in self.retrievals for edge in retrieval.edges]
 
     # -- spans -------------------------------------------------------------
 
@@ -215,14 +273,16 @@ class Recorder:
         later generation supersedes an earlier one. A caller may override
         either but must never be required to supply them.
         """
-        return capture(
-            query if query is not None else (self.queries[0] if self.queries else ""),
-            self.items,
-            answer if answer is not None else (self.answers[-1] if self.answers else None),
-            edges=self.edges,
-            spans=self.spans,
+        return Trace(
+            query=query
+            if query is not None
+            else (self.queries[0] if self.queries else ""),
+            answer=answer
+            if answer is not None
+            else (self.answers[-1] if self.answers else None),
             producer=self.producer,
-            arm=self.arm,
             started_at=self.started_at,
             duration_ms=self._elapsed_ms(),
+            retrievals=list(self.retrievals),
+            spans=list(self.spans),
         )

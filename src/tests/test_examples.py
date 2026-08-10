@@ -54,11 +54,15 @@ def test_the_artifact_is_json_the_viewer_understands(tmp_path):
 
     payload = json.loads(path.read_text(encoding="utf-8"))
 
-    assert payload["schema_version"] == 2
-    assert payload["items"]
-    assert payload["edges"]
-    assert "used" not in payload["items"][0], "a verdict must not be persisted"
-    assert "overlap" in payload["items"][0]
+    assert payload["schema_version"] == 3
+    assert payload["retrievals"], "items nest under a retrieval in schema 3"
+
+    items = [item for group in payload["retrievals"] for item in group["items"]]
+    edges = [edge for group in payload["retrievals"] for edge in group["edges"]]
+    assert items
+    assert edges
+    assert "used" not in items[0], "a verdict must not be persisted"
+    assert "overlap" in items[0]
 
 
 def test_the_demo_retrieves_more_than_the_answer_uses(tmp_path):

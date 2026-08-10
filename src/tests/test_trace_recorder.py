@@ -442,9 +442,10 @@ def test_the_optional_fusion_fields_serialize_even_when_empty(tmp_path):
 
     payload = to_dict(recorder.finish())
 
-    assert payload["items"][0]["vector_score"] is None
-    assert payload["items"][0]["graph_score"] is None
-    assert payload["arm"] == ARM_UNKNOWN
+    items = [item for group in payload["retrievals"] for item in group["items"]]
+    assert items[0]["vector_score"] is None
+    assert items[0]["graph_score"] is None
+    assert payload["retrievals"][0]["arm"] == ARM_UNKNOWN
 
 
 def test_per_arm_scores_survive_when_a_producer_sets_them():

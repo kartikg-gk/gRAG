@@ -1,9 +1,15 @@
+# Runtime: the tracing package needs none of this. src/tracing/ is
+# standard library only, verified by test_tracing_is_standalone.py.
 httpx==0.28.1
 pydantic==2.13.4
 
-# Optional: only for src/tracing_langgraph.py, the LangGraph adapter.
-# src/tracing/ itself is stdlib-only and needs none of this.
+# Adapter: only src/tracing_langgraph.py needs this.
 langchain-core==1.5.3
+
+# Examples and tests only. examples/graph_demo.py builds a real StateGraph
+# so the adapter's node spans and callback propagation are exercised for
+# real rather than asserted. Not required to consume the tracing package.
+langgraph==1.2.10
 
 # dev
 pytest==9.1.1

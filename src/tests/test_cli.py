@@ -18,7 +18,7 @@ import pytest
 
 from src.cli import main
 from src.ingestion import API_ROOT
-from src.tracing import Trace, TraceItem, save
+from src.tracing import TraceItem, capture, save
 
 # --------------------------------------------------------------------------
 # a fake GitHub
@@ -150,13 +150,13 @@ def fake_github(recorder: list | None = None, *, fail_with: int | None = None):
 def saved_trace(tmp_path):
     path = tmp_path / "trace.json"
     save(
-        Trace(
-            query="who changed auth?",
-            answer="alpha bravo charlie delta echo foxtrot golf hotel india juliet",
-            items=[
+        capture(
+            "who changed auth?",
+            [
                 TraceItem(id="a", content="alpha bravo charlie", source="graph"),
                 TraceItem(id="b", content="zulu yankee", source="vector"),
             ],
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet",
         ),
         path,
     )

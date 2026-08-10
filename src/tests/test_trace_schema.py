@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from src.tracing import (
+    capture,
     is_used,
     SCHEMA_VERSION,
     Trace,
@@ -29,7 +30,7 @@ EXAMPLE_PATH = Path(__file__).resolve().parents[2] / "example_trace.json"
 
 
 def make_trace() -> Trace:
-    return Trace(
+    return _trace(
         query="who changed authentication recently?",
         answer="Alice changed it in PR #1347.",
         started_at=datetime(2026, 8, 2, 10, 0, 0, tzinfo=timezone.utc),
@@ -56,6 +57,18 @@ def make_trace() -> Trace:
             )
         ],
     )
+
+
+
+def _trace(*, query: str = "", answer=None, items=(), edges=(), **kwargs):
+    """Build a flat trace the way a one-shot producer does.
+
+    Schema 3 nests items under a Retrieval, and ``capture`` is the supported
+    way to make one from a flat list — so these tests exercise the real path
+    instead of assembling the dataclass by hand.
+    """
+    return capture(query, items, answer, edges=edges, **kwargs)
+
 
 
 # --------------------------------------------------------------------------
@@ -93,7 +106,7 @@ def test_used_is_unset_until_a_classifier_runs():
 
 
 def test_edges_are_optional():
-    trace = Trace(query="q")
+    trace = _trace(query="q")
 
     assert trace.edges == []
     assert trace.items == []
@@ -124,7 +137,7 @@ def test_timestamps_serialize_as_iso_strings():
 
 
 def test_missing_timestamp_serializes_as_null():
-    payload = to_dict(Trace(query="q"))
+    payload = to_dict(_trace(query="q"))
 
     assert payload["started_at"] is None
 
@@ -159,7 +172,8 @@ def test_written_file_is_readable_json(tmp_path):
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["query"] == "who changed authentication recently?"
-    assert len(payload["items"]) == 2
+    items = [item for group in payload["retrievals"] for item in group["items"]]
+    assert len(items) == 2
 
 
 def test_reading_a_trace_from_a_future_version_is_refused(tmp_path):

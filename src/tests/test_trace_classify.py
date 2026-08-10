@@ -15,16 +15,28 @@ from __future__ import annotations
 import pytest
 
 from src.tracing import (
+    capture,
     DEFAULT_THRESHOLD,
     MIN_TOKEN_LENGTH,
     is_used,
     used_count,
     Trace,
     TraceItem,
-    capture,
     score_overlaps,
     overlap_score,
 )
+
+
+def _trace(*, query: str = "", answer=None, items=(), edges=(), **kwargs):
+    """Build a flat trace the way a one-shot producer does.
+
+    Schema 3 nests items under a Retrieval, and ``capture`` is the supported
+    way to make one from a flat list — so these tests exercise the real path
+    instead of assembling the dataclass by hand.
+    """
+    return capture(query, items, answer, edges=edges, **kwargs)
+
+
 
 # --------------------------------------------------------------------------
 # fixtures
@@ -48,7 +60,7 @@ UNRELATED = "Document how to rotate service account credentials for staging."
 
 def boundary_trace() -> Trace:
     """Items scoring exactly 0.30, 0.20 and 0.10 against the answer."""
-    return Trace(
+    return _trace(
         query="q",
         answer=BOUNDARY_ANSWER,
         items=[
@@ -155,7 +167,7 @@ def test_used_count_applies_the_threshold_for_a_consumer():
 
 
 def test_the_three_deliberate_fixtures_land_where_intended():
-    trace = Trace(
+    trace = _trace(
         query="q",
         answer=REALISTIC_ANSWER,
         items=[
@@ -172,7 +184,7 @@ def test_the_three_deliberate_fixtures_land_where_intended():
 
 
 def test_a_trace_with_no_answer_is_left_unmeasured():
-    trace = Trace(query="q", items=[TraceItem(id="a", content=HEAVY, source="stub")])
+    trace = _trace(query="q", items=[TraceItem(id="a", content=HEAVY, source="stub")])
 
     score_overlaps(trace)
 
@@ -181,7 +193,7 @@ def test_a_trace_with_no_answer_is_left_unmeasured():
 
 
 def test_a_trace_with_an_empty_answer_is_left_unmeasured():
-    trace = Trace(
+    trace = _trace(
         query="q", answer="", items=[TraceItem(id="a", content=HEAVY, source="stub")]
     )
 
@@ -197,7 +209,7 @@ def test_score_overlaps_returns_the_trace_it_was_given():
 
 
 def test_a_trace_with_no_items_scores_cleanly():
-    trace = score_overlaps(Trace(query="q", answer=REALISTIC_ANSWER))
+    trace = score_overlaps(_trace(query="q", answer=REALISTIC_ANSWER))
 
     assert trace.items == []
 

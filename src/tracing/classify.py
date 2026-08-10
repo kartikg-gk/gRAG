@@ -18,49 +18,21 @@ checked; this one can be recomputed by hand from the trace.
 
 from __future__ import annotations
 
-import re
-
+from ._text import MIN_TOKEN_LENGTH, tokens
 from .schema import Trace
 
 #: The one place the cutoff is defined. Consumers import it rather than
 #: hard-coding a number.
 DEFAULT_THRESHOLD = 0.2
 
-#: Shortest token worth counting. Two-character fragments match everywhere and
-#: say nothing.
-MIN_TOKEN_LENGTH = 3
-
-# Underscores, hashes and hyphens are kept inside tokens on purpose. A plain
-# word-character split shatters `payment_service` into two common words, turns
-# `#412` into a bare number, and splits `feature-flag` in half — which destroys
-# most of the signal on a code corpus, where identifiers and issue references
-# are the distinctive terms.
-_WORD_PATTERN = re.compile(r"[a-z0-9_#\-]+")
-
-# Words too common to say anything about whether a document was used.
-_STOPWORDS = frozenset(
-    """
-    a an the and or but if in on at to of for with without from by as is are was
-    were be been being it its this that these those there their them they he she
-    his her you your we our us i not no do does did has have had will would can
-    could should may might must so than then when where which who whom what why
-    how all any both each few more most other some such only own same too very
-    just about into over under again further once here
-    """.split()
-)
-
-
-def _tokens(text: str) -> set[str]:
-    """Distinct meaningful tokens.
-
-    A set, not a list: repeating a word twenty times must not make a document
-    look twenty times more relevant.
-    """
-    return {
-        token
-        for token in _WORD_PATTERN.findall(text.lower())
-        if len(token) >= MIN_TOKEN_LENGTH and token not in _STOPWORDS
-    }
+__all__ = [
+    "DEFAULT_THRESHOLD",
+    "MIN_TOKEN_LENGTH",
+    "overlap_score",
+    "is_used",
+    "score_overlaps",
+    "used_count",
+]
 
 
 def overlap_score(content: str, answer: str) -> float:
@@ -77,11 +49,11 @@ def overlap_score(content: str, answer: str) -> float:
     Returns 0.0 when either side has no tokens, so an empty answer never makes
     everything look used.
     """
-    answer_tokens = _tokens(answer)
+    answer_tokens = tokens(answer)
     if not answer_tokens:
         return 0.0
 
-    item_tokens = _tokens(content)
+    item_tokens = tokens(content)
     if not item_tokens:
         return 0.0
 

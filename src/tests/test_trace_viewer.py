@@ -10,13 +10,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.tracing import Trace, TraceEdge, TraceItem, render, render_file, save
+from src.tracing import Trace, TraceEdge, TraceItem, render, render_file, save, capture
 
 EXAMPLE_PATH = Path(__file__).resolve().parents[2] / "example_trace.json"
 
 
 def make_trace() -> Trace:
-    return Trace(
+    return _trace(
         query="who changed authentication recently?",
         answer="Alice changed it in PR #1347.",
         started_at=datetime(2026, 8, 2, 10, 0, 0, tzinfo=timezone.utc),
@@ -43,6 +43,18 @@ def make_trace() -> Trace:
             )
         ],
     )
+
+
+
+def _trace(*, query: str = "", answer=None, items=(), edges=(), **kwargs):
+    """Build a flat trace the way a one-shot producer does.
+
+    Schema 3 nests items under a Retrieval, and ``capture`` is the supported
+    way to make one from a flat list — so these tests exercise the real path
+    instead of assembling the dataclass by hand.
+    """
+    return capture(query, items, answer, edges=edges, **kwargs)
+
 
 
 # --------------------------------------------------------------------------
@@ -121,7 +133,7 @@ def test_a_summary_counts_used_against_retrieved():
 
 
 def test_an_unclassified_item_is_not_called_ignored():
-    trace = Trace(
+    trace = _trace(
         query="q",
         items=[TraceItem(id="pr:1", content="x", source="graph", score=0.5)],
     )
@@ -132,14 +144,14 @@ def test_an_unclassified_item_is_not_called_ignored():
 
 
 def test_a_trace_with_no_items_still_renders():
-    output = render(Trace(query="nothing matched"))
+    output = render(_trace(query="nothing matched"))
 
     assert "nothing matched" in output
     assert "0 of 0" in output
 
 
 def test_a_trace_with_no_answer_still_renders():
-    trace = Trace(
+    trace = _trace(
         query="q", items=[TraceItem(id="pr:1", content="x", source="graph")]
     )
 
@@ -149,13 +161,13 @@ def test_a_trace_with_no_answer_still_renders():
 
 
 def test_a_trace_with_no_edges_omits_the_relations_section():
-    output = render(Trace(query="q"))
+    output = render(_trace(query="q"))
 
     assert "RESOLVES" not in output
 
 
 def test_long_content_is_truncated_to_keep_rows_readable():
-    trace = Trace(
+    trace = _trace(
         query="q",
         items=[TraceItem(id="pr:1", content="x" * 500, source="graph")],
     )

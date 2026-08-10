@@ -29,6 +29,7 @@ written.
     print(render(trace))
 """
 
+from ._text import STOP, WORD_RE, tokens
 from .capture import (
     KIND_CHAIN,
     KIND_LLM,
@@ -48,12 +49,14 @@ from .classify import (
 )
 from .schema import (
     ARM_GRAPH,
+    KIND_DOCUMENT,
     ARM_HYBRID,
     ARM_UNKNOWN,
     ARM_VECTOR,
     ARMS,
     PRODUCER_UNKNOWN,
     SCHEMA_VERSION,
+    Retrieval,
     STATUS_ERROR,
     STATUS_OK,
     STATUS_RUNNING,
@@ -84,7 +87,9 @@ __all__ = [
     "Trace",
     "TraceItem",
     "TraceEdge",
+    "Retrieval",
     "Span",
+    "KIND_DOCUMENT",
     "to_dict",
     "trace_from_dict",
     "ARM_VECTOR",
@@ -99,6 +104,9 @@ __all__ = [
     # accumulation
     "capture",
     "Recorder",
+    "tokens",
+    "STOP",
+    "WORD_RE",
     "UNKNOWN_SOURCE",
     "KIND_CHAIN",
     "KIND_RETRIEVER",
