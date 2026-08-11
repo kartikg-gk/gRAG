@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphrag"
+version = "0.1.0"
+description = "A repository knowledge graph, and a trace of what retrieval actually used."
+requires-python = ">=3.12"
+
+# The root README is the one documentation file that is tracked; everything
+# else under *.md stays local. It is empty for now, which setuptools accepts —
+# and it has to be tracked for this key to mean anything, since a missing
+# readme is dropped silently rather than raising.
+readme = "README.md"
+
+# Runtime dependencies. Two, and each earns its place:
+#
+#   httpx    — src/ingestion/github.py. The GitHub REST client. Chosen over
+#              urllib for connection reuse across the hundreds of per-pull-
+#              request enrichment calls a single ingest makes.
+#   pydantic — src/ingestion/models.py. Validates GitHub's payloads at the
+#              boundary, so a shape change surfaces at parse time rather than
+#              as an AttributeError three modules later.
+#
+# src/tracing/ needs neither. It is standard library only, which is what makes
+# the tracing package copyable on its own — see test_tracing_is_standalone.py.
+dependencies = [
+    "httpx>=0.28,<0.29",
+    "pydantic>=2.13,<3",
+]
+
+[project.optional-dependencies]
+# The LangGraph adapter is one file (src/tracing_langgraph.py) and is a sibling
+# of src/tracing/, not a member of it, precisely so this dependency stays
+# optional and the package below it stays stdlib-only.
+adapter = ["langchain-core>=1.5,<2"]
+
+# examples/graph_demo.py builds a real StateGraph so the adapter's node spans
+# and callback propagation are exercised rather than asserted. Nothing in the
+# library imports this.
+examples = ["langgraph>=1.2,<2"]
+
+dev = [
+    "pytest>=9,<10",
+    "graphrag[adapter,examples]",
+]
+
+[project.scripts]
+# The full command surface: ingest and view.
+graphrag = "graphrag.cli:main"
+# Read a trace file path, start the viewer. Deliberately a separate entry point
+# into the stdlib-only package — it runs even when the ingestion dependencies
+# are not installed.
+graphrag-view = "graphrag.tracing.viewer:main"
+
+# The source tree is a flat `src/` directory whose modules import each other
+# relatively, so it installs under a real distribution name without a single
+# import statement changing. In-repo tests keep importing `src.` from the
+# project root; both names reach the same code.
+#
+# Packages are listed rather than auto-discovered so that adding a directory
+# under src/ is a decision, not an accident — and so src/tests never ships.
+[tool.setuptools]
+package-dir = { "graphrag" = "src" }
+packages = [
+    "graphrag",
+    "graphrag.common",
+    "graphrag.ingestion",
+    "graphrag.knowledge",
+    "graphrag.tracing",
+]

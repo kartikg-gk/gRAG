@@ -6,3 +6,12 @@ __pycache__/
 
 # Documentation and instruction files stay local, untracked.
 *.md
+# except the root one, which the outside world reads. Anchored with a leading
+# slash: a bare "!README.md" would also un-ignore src/tracing/README.md and the
+# other per-package notes, which are meant to stay local.
+!/README.md
+
+# Build artifacts.
+build/
+dist/
+*.egg-info/

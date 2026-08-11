@@ -97,5 +97,42 @@
       "weight": 0.75
     }
   ],
-  "spans": []
+  "spans": [
+    {
+      "id": "run",
+      "name": "answer_question",
+      "kind": "chain",
+      "parent_id": null,
+      "start_ms": 0.0,
+      "end_ms": 412.5,
+      "status": "ok"
+    },
+    {
+      "id": "r1",
+      "name": "graph_retrieve",
+      "kind": "retriever",
+      "parent_id": "run",
+      "start_ms": 8.0,
+      "end_ms": 121.0,
+      "status": "ok"
+    },
+    {
+      "id": "r2",
+      "name": "vector_retrieve",
+      "kind": "retriever",
+      "parent_id": "run",
+      "start_ms": 121.0,
+      "end_ms": 196.5,
+      "status": "error"
+    },
+    {
+      "id": "g1",
+      "name": "generate",
+      "kind": "llm",
+      "parent_id": "run",
+      "start_ms": 197.0,
+      "end_ms": 412.0,
+      "status": "ok"
+    }
+  ]
 }

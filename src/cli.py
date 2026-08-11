@@ -138,7 +138,10 @@ def _view(args: argparse.Namespace, session: httpx.Client | None) -> int:
     except FileNotFoundError:
         print(f"no such trace file: {args.trace}", file=sys.stderr)
         return 1
-    except ValueError as exc:
+    except OSError as exc:
+        print(f"could not read {args.trace}: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, TypeError) as exc:
         print(f"not a readable trace: {exc}", file=sys.stderr)
         return 1
     except KeyError as exc:

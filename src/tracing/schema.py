@@ -268,7 +268,17 @@ def to_dict(trace: Trace) -> dict[str, Any]:
 
 
 def trace_from_dict(payload: dict[str, Any]) -> Trace:
-    """Rebuild a trace from plain data, including versions 1 and 2."""
+    """Rebuild a trace from plain data, including versions 1 and 2.
+
+    Raises ``ValueError`` on anything that is not a trace object. A file of
+    valid JSON that happens to be a list is a wrong file, not a crash, and the
+    caller needs to be able to say so in one sentence.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"a trace is a JSON object, got {type(payload).__name__}"
+        )
+
     version = payload.get("schema_version", SCHEMA_VERSION)
     if version > SCHEMA_VERSION:
         raise ValueError(
