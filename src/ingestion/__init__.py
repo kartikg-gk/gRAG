@@ -5,6 +5,7 @@ entities, parses source code, builds a graph, or persists anything.
 """
 
 from .collect import STAGE_CHANGED_FILES, STAGE_REVIEWS, collect_by_pull_request
+from .order import in_ingest_order, ingest_key
 from .github import (
     API_ROOT,
     PER_PAGE,
@@ -43,6 +44,8 @@ __all__ = [
     "collect_by_pull_request",
     "STAGE_REVIEWS",
     "STAGE_CHANGED_FILES",
+    "in_ingest_order",
+    "ingest_key",
     "fetch_repository",
     "fetch_pull_requests",
     "fetch_issues",

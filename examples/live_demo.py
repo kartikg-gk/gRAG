@@ -32,6 +32,7 @@ from src.ingestion import (
     fetch_commits,
     fetch_issues,
     fetch_pull_requests,
+    in_ingest_order,
     fetch_repository,
     fetch_reviews,
     make_session,
@@ -70,7 +71,8 @@ def build_graph(
     requested per pull request — one extra call each, which is why both are
     switchable off.
     """
-    pull_requests = list(fetch_pull_requests(session, repo, limit=prs))
+    # Same single sort point the CLI uses. See ingestion/order.py.
+    pull_requests = in_ingest_order(fetch_pull_requests(session, repo, limit=prs))
     numbers = [pr.number for pr in pull_requests]
 
     # One failed enrichment call drops that pull request's extras, not the run.
@@ -89,8 +91,8 @@ def build_graph(
     builder.build(
         repository=fetch_repository(session, repo),
         pull_requests=pull_requests,
-        issues=fetch_issues(session, repo, limit=issues),
-        commits=fetch_commits(session, repo, limit=commits),
+        issues=in_ingest_order(fetch_issues(session, repo, limit=issues)),
+        commits=in_ingest_order(fetch_commits(session, repo, limit=commits)),
         reviews=review_map,
         changed_files=file_map,
         enrichment_failures_by_stage={

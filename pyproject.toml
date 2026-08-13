@@ -41,6 +41,24 @@ adapter = ["langchain-core>=1.5,<2"]
 # library imports this.
 examples = ["langgraph>=1.2,<2"]
 
+# The statistical half of entity extraction. Optional because the rule stage —
+# ticket references, pull request references, service names — is stdlib-only
+# and is the high-precision half; without spaCy the extractor still returns
+# those, and records `source` as "none" so a rules-only result is never
+# mistaken for a model that found nothing. The en_core_web_sm model is a
+# separate download and is not expressible here:
+#     python -m spacy download en_core_web_sm
+extraction = ["spacy>=3.7,<4"]
+
+# Learned embeddings for entity resolution. Optional for the same reason: the
+# default similarity source is character n-gram cosine from the standard
+# library, which is what catches the orthographic drift this pipeline actually
+# produces (notification-service against notification_service). Embeddings earn
+# their weight on semantic drift, which n-grams cannot reach — and resolution
+# takes its similarity source as an argument, so none of its logic depends on
+# which one is installed.
+embeddings = ["sentence-transformers>=3,<6"]
+
 dev = [
     "pytest>=9,<10",
     "graphrag[adapter,examples]",

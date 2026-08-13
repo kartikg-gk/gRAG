@@ -29,8 +29,23 @@ from pydantic import BaseModel, ValidationError
 from .models import ChangedFile, Commit, Issue, PullRequest, Repository, Review
 
 API_ROOT = "https://api.github.com"
+
+#: GitHub's maximum. Anything smaller multiplies the request count for nothing.
 PER_PAGE = 100
 TIMEOUT = 30.0
+
+#: Sent explicitly on every list endpoint that accepts them, rather than
+#: relying on GitHub's defaults. The defaults are not part of the API contract
+#: and have changed before; a silent change to them would silently change which
+#: items a limited fetch returns.
+#:
+#: ``sort=updated`` because the interesting items are the recently touched
+#: ones, and a ``--prs 50`` run should get the 50 that matter rather than the
+#: 50 oldest. ``direction=desc`` pairs with it to mean newest first.
+#:
+#: This does not make the pipeline's output order server-dependent — see
+#: ``order.py``, which sorts locally before anything is built.
+LIST_PARAMS = {"sort": "updated", "direction": "desc"}
 
 
 class GitHubError(RuntimeError):
@@ -256,7 +271,7 @@ def fetch_pull_requests(
 ) -> Iterator[PullRequest]:
     """Yield pull requests, newest first as GitHub orders them."""
     path = f"/repos/{repo}/pulls"
-    items = _paginate(session, path, {"state": state})
+    items = _paginate(session, path, {"state": state, **LIST_PARAMS})
     yield from islice(_validated(PullRequest, items, path), limit)
 
 
@@ -269,7 +284,7 @@ def fetch_issues(
     ``pull_request`` key and are dropped here so ``limit`` counts real issues.
     """
     path = f"/repos/{repo}/issues"
-    items = _paginate(session, path, {"state": state})
+    items = _paginate(session, path, {"state": state, **LIST_PARAMS})
     issues = (item for item in items if "pull_request" not in item)
     yield from islice(_validated(Issue, issues, path), limit)
 
@@ -277,7 +292,12 @@ def fetch_issues(
 def fetch_commits(
     session: httpx.Client, repo: str, *, limit: int | None = None
 ) -> Iterator[Commit]:
-    """Yield commits from the repository's default branch."""
+    """Yield commits from the repository's default branch.
+
+    No ``sort`` or ``direction``: the commits endpoint accepts neither, and
+    sending them is silently ignored rather than honoured. Commit order is
+    settled locally instead — see ``order.py``.
+    """
     path = f"/repos/{repo}/commits"
     yield from islice(_validated(Commit, _paginate(session, path), path), limit)
 

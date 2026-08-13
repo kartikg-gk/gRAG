@@ -218,7 +218,10 @@ def test_runtime_dependencies_are_exactly_the_two_that_are_needed():
     assert names == {"httpx", "pydantic"}
 
 
-@pytest.mark.parametrize("package", ["langgraph", "langchain-core", "pytest"])
+@pytest.mark.parametrize(
+    "package",
+    ["langgraph", "langchain-core", "pytest", "spacy", "sentence-transformers"],
+)
 def test_test_and_example_only_dependencies_are_optional(package):
     """Nothing needed solely by tests or examples may be a runtime requirement."""
     config = project_config()["project"]

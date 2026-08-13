@@ -33,6 +33,7 @@ from .ingestion import (
     fetch_pull_requests,
     fetch_repository,
     fetch_reviews,
+    in_ingest_order,
     make_session,
 )
 from .knowledge import GraphBuilder
@@ -77,7 +78,12 @@ def _ingest(args: argparse.Namespace, session: httpx.Client | None) -> int:
 
     try:
         repository = fetch_repository(session, args.repository)
-        pull_requests = list(
+
+        # The one sort point in the pipeline. Everything below — enrichment
+        # order, node insertion order, and therefore which surface form becomes
+        # an entity's label — follows from here, so it must not depend on the
+        # order GitHub happened to return things in. See ingestion/order.py.
+        pull_requests = in_ingest_order(
             fetch_pull_requests(session, args.repository, limit=args.prs)
         )
         numbers = [pr.number for pr in pull_requests]
@@ -104,8 +110,12 @@ def _ingest(args: argparse.Namespace, session: httpx.Client | None) -> int:
         stats = builder.build(
             repository=repository,
             pull_requests=pull_requests,
-            issues=fetch_issues(session, args.repository, limit=args.issues),
-            commits=fetch_commits(session, args.repository, limit=args.commits),
+            issues=in_ingest_order(
+                fetch_issues(session, args.repository, limit=args.issues)
+            ),
+            commits=in_ingest_order(
+                fetch_commits(session, args.repository, limit=args.commits)
+            ),
             reviews=reviews,
             changed_files=changed_files,
             enrichment_failures_by_stage={
