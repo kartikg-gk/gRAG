@@ -1,8 +1,9 @@
 """Resilient collection across many pull requests.
 
-This sits above the client: the client reports one request's outcome, and this
-decides what a run does about it. Retrying and giving up both live here, not in
-``github.py``.
+This sits above the client. The client now retries a transient failure inside
+one request — see ``github._request`` — and this decides what the run does when
+that has already been tried and still failed. Retrying is not repeated here;
+doing both would give one enrichment call nine attempts instead of three.
 
 **Deliberate, and not to be "corrected" back.** Aborting an entire fetch
 because one pull request's enrichment call failed loses the other forty-nine
@@ -18,8 +19,7 @@ from typing import Any, Callable, Iterable
 
 import httpx
 
-from ..common.retry import with_retry
-from .github import GitHubAuthError, GitHubError, GitHubRateLimitError
+from .github import GitHubError
 
 PerPullRequestFetch = Callable[[httpx.Client, str, int], Iterable[Any]]
 
@@ -30,20 +30,6 @@ STAGE_REVIEWS = "reviews"
 STAGE_CHANGED_FILES = "changed_files"
 
 
-def is_retryable(error: BaseException) -> bool:
-    """Only a server-side failure is worth a second attempt.
-
-    An auth failure never becomes valid by asking again. A spent rate limit is
-    not slept off here — waiting out a primary GitHub limit can block for an
-    hour, so it propagates with its reset time and the run's owner decides.
-    """
-    if isinstance(error, (GitHubAuthError, GitHubRateLimitError)):
-        return False
-    if isinstance(error, GitHubError):
-        return error.status_code is not None and error.status_code >= 500
-    return False
-
-
 def collect_by_pull_request(
     fetch: PerPullRequestFetch,
     session: httpx.Client,
@@ -52,8 +38,9 @@ def collect_by_pull_request(
 ) -> tuple[dict[int, list], int]:
     """Run a per-pull-request fetch across many numbers, surviving failures.
 
-    Each call is retried on a server-side failure. A call that still fails
-    drops that one pull request's data and the walk continues.
+    Transient failures are already retried inside the client, so a call that
+    reaches here has failed every attempt. It drops that one pull request's
+    data and the walk continues.
 
     Returns the results and how many pull requests were lost. The count is
     returned rather than logged because a graph that quietly lost a pull
@@ -64,12 +51,7 @@ def collect_by_pull_request(
 
     for number in numbers:
         try:
-            # ``n=number`` binds the value now rather than closing over the
-            # loop variable, so the retry cannot fetch a different number.
-            results[number] = with_retry(
-                lambda n=number: list(fetch(session, repo, n)),
-                retryable=is_retryable,
-            )
+            results[number] = list(fetch(session, repo, number))
         except GitHubError:
             failures += 1
 

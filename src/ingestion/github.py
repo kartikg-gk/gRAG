@@ -9,11 +9,22 @@ Every public function takes the session as its first argument, so tests pass an
 ``httpx.Client`` backed by ``httpx.MockTransport`` and exercise this module for
 real without touching the network.
 
-**The client never retries and never sleeps.** It raises a typed exception and
-lets the caller decide, because only the caller knows whether waiting is
-acceptable. Auth failures must never be retried at all; a rate limit carries
-its reset time so a caller can choose between waiting and giving up. Retrying
-lives in ``src/common/retry.py``, above this module.
+Retrying transient failures
+---------------------------
+
+``_request`` retries in the request layer, three attempts with a short
+exponential backoff, and only for failures that a second attempt could plausibly
+fix: a 5xx, or a connection or read timeout where no response arrived at all.
+
+Everything else raises on the first attempt. A 4xx is a statement about the
+request and will say the same thing again. An auth failure never becomes valid
+by asking twice. **A rate limit is never slept off here** — waiting out a
+primary GitHub limit can block for an hour, so it propagates carrying its reset
+time and the run's owner decides.
+
+This retries at the level of one HTTP request, so a paginated walk resumes at
+the page that failed instead of restarting from the first. An earlier version
+retried caller-side around whole fetches, which could not do that.
 """
 
 from __future__ import annotations
@@ -25,6 +36,8 @@ from typing import Any, Iterable, Iterator
 
 import httpx
 from pydantic import BaseModel, ValidationError
+
+from ..common.retry import with_retry
 
 from .models import ChangedFile, Commit, Issue, PullRequest, Repository, Review
 
@@ -65,6 +78,15 @@ class GitHubAuthError(GitHubError):
     """Credentials are missing, wrong, or lack the required scope (401).
 
     Never retryable. The token will not become valid by asking again.
+    """
+
+
+class GitHubTransportError(GitHubError):
+    """No response arrived: a connection failure or a timeout.
+
+    Separated from ``GitHubError`` because it is the one failure with no status
+    code that is still worth retrying. Judging it by ``status_code is None``
+    would also sweep in malformed-payload errors, which retrying cannot fix.
     """
 
 
@@ -115,23 +137,59 @@ def make_session(token: str | None = None) -> httpx.Client:
 # --------------------------------------------------------------------------
 
 
-def _request(
+def is_transient(error: BaseException) -> bool:
+    """Whether a second attempt could plausibly succeed.
+
+    Only two cases qualify. A 5xx is the server saying it failed, not that the
+    request was wrong. A transport failure means no response arrived, so nothing
+    has been learned about the request at all.
+
+    Auth and rate-limit failures are checked first and excluded even though a
+    rate limit can carry a 5xx-shaped status in odd deployments: neither is
+    fixed by asking again, and sleeping off a rate limit here could block the
+    run for an hour.
+    """
+    if isinstance(error, (GitHubAuthError, GitHubRateLimitError)):
+        return False
+    if isinstance(error, GitHubTransportError):
+        return True
+    if isinstance(error, GitHubError):
+        return error.status_code is not None and error.status_code >= 500
+    return False
+
+
+def _request_once(
     session: httpx.Client, url: str, params: dict[str, Any] | None = None
 ) -> httpx.Response:
-    """GET ``url`` once, or raise the exception that says what went wrong.
-
-    One attempt, no sleeping. Whether a failure is worth another try depends on
-    how long the caller is willing to wait, which this module cannot know.
-    """
+    """GET ``url`` once, or raise the exception that says what went wrong."""
     try:
         response = session.get(url, params=params)
+    except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
+        # No response arrived. Worth another attempt.
+        raise GitHubTransportError(f"request to {url} failed: {exc}") from exc
     except httpx.HTTPError as exc:
+        # A protocol or decoding failure. A second attempt would fail the same.
         raise GitHubError(f"request to {url} failed: {exc}") from exc
 
     if response.is_success:
         return response
 
     raise _failure(url, response)
+
+
+def _request(
+    session: httpx.Client, url: str, params: dict[str, Any] | None = None
+) -> httpx.Response:
+    """GET ``url``, retrying only what a retry could fix.
+
+    Bounded at ``retry.MAX_ATTEMPTS`` total attempts. When they are exhausted
+    the last exception propagates unchanged — there is no partial result and no
+    bookkeeping, so a top-level fetch either completes or aborts the ingest.
+    """
+    return with_retry(
+        lambda: _request_once(session, url, params),
+        retryable=is_transient,
+    )
 
 
 def _failure(url: str, response: httpx.Response) -> GitHubError:
