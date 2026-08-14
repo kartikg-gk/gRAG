@@ -19,12 +19,7 @@ from .resolve import (
     ResolvedEntity,
     Resolver,
 )
-from .similarity import (
-    EmbeddingSimilarity,
-    LexicalSimilarity,
-    Similarity,
-    load_similarity,
-)
+from .similarity import MODEL_NAME, SentenceTransformerEmbedder, Similarity
 from .extract import (
     DEFAULT_BACKEND,
     LABEL_MAP,
@@ -44,12 +39,12 @@ from .extract import (
 __all__ = [
     "Backend",
     "DEFAULT_BACKEND",
-    "EmbeddingSimilarity",
+    "MODEL_NAME",
     "Entity",
     "Extractor",
     "Judge",
     "LABEL_MAP",
-    "LexicalSimilarity",
+    "SentenceTransformerEmbedder",
     "NullBackend",
     "RULES",
     "ResolutionStats",
@@ -63,6 +58,5 @@ __all__ = [
     "clean",
     "dedupe",
     "load_backend",
-    "load_similarity",
     "windows",
 ]

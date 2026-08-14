@@ -1,0 +1,9 @@
+# Committed artifacts are compared against freshly generated ones, and the
+# suite runs under WSL while the files were written on Windows. Pinning
+# line endings keeps that comparison about behaviour rather than about
+# which OS wrote the file last.
+*.json text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf

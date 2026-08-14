@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     resolver.resolve(entities)
 
     stats = resolver.stats
-    print(f"similarity source: {resolver.similarity.name}")
+    print(f"embedder:          {resolver.similarity.identity}")
     print(f"judge:             {'none configured' if resolver.judge is None else 'set'}")
     print()
     print(f"entities seen      {stats.seen}")

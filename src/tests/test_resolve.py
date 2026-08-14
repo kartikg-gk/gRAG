@@ -1,23 +1,30 @@
 """Tests for entity resolution.
 
-Everything here runs on a stub similarity source with fixed scores. That is not
-a shortcut around a missing dependency — it is the point of injecting the
-source at all. Which band a score falls in, which way each comparison points,
-what a failure does and which label survives are all properties of the
-resolution logic, and none of them should change if the number came from a
-different model.
+Everything here runs on a **stub embedder**, not a stub scorer. The real
+``Similarity.scores`` — normalise, then dot product — executes in every test
+below; only the vectors are fabricated. That is the point of putting the seam
+at vector production: which band a score falls in, which way each comparison
+points, what a failure does and which label survives are all properties of the
+resolution logic, and none of them should change with the source of a number.
 
-The judge is a counting stub for the same reason, and because "the model was
-not called" is an assertion that cannot be made against a real one.
+It also removes a class of test that could previously be written but never
+happen: stubbing the scoring function allowed identical text to score less than
+1.0, which no embedder can produce. See
+``test_a_repeat_never_reaches_the_model_whatever_the_band_is_set_to``.
+
+The judge is a counting stub for a different reason — "the model was not
+called" is an assertion that cannot be made against a real one.
 """
 
 from __future__ import annotations
+
+import math
 
 import pytest
 
 from datetime import datetime, timedelta, timezone
 
-from src.analysis import Entity, ResolvedEntity, Resolver
+from src.analysis import Entity, ResolvedEntity, Resolver, Similarity
 from src.common.config import (
     DEEP_THRESHOLD,
     ENTITY_PERSON,
@@ -28,19 +35,70 @@ from src.common.config import (
 )
 
 
-class StubSimilarity:
-    """Returns a fixed score for every candidate, and counts its calls."""
+class StubEmbedder:
+    """Places dense vectors so that distinct texts score a chosen cosine.
 
-    name = "stub"
+    The seam is at vector production, so resolution's thresholds are driven by
+    geometry rather than by a stubbed-out scoring function — the real
+    ``Similarity.scores`` runs in every test below.
 
-    def __init__(self, score: float = 0.0, *, by_candidate: dict[str, float] | None = None):
+    Uniform mode gives every text weight ``sqrt(s)`` on a shared axis plus
+    ``sqrt(1 - s)`` on an axis of its own, which makes every distinct pair
+    score exactly ``s`` and each text score 1.0 with itself.
+
+    ``by_candidate`` mode puts the named texts at a chosen cosine from the
+    shared axis and everything else entirely on it, so an unnamed text scores
+    each named one at its own value. Two unnamed texts then score 1.0 with each
+    other, so do not put two of the same type in one resolver unless a merge is
+    what you want.
+    """
+
+    dimension = 64
+    identity = "stub"
+
+    def __init__(
+        self,
+        score: float = 0.0,
+        *,
+        by_candidate: dict[str, float] | None = None,
+    ):
         self.score = score
         self.by_candidate = by_candidate or {}
+        self._axes: dict[str, int] = {}
+
+    def _axis(self, text: str) -> int:
+        """A private dimension per text. Axis 0 is the shared one."""
+        if text not in self._axes:
+            self._axes[text] = 1 + len(self._axes)
+        return self._axes[text]
+
+    def embed(self, text: str) -> list[float]:
+        vector = [0.0] * self.dimension
+
+        if self.by_candidate:
+            if text not in self.by_candidate:
+                vector[0] = 1.0
+                return vector
+            target = self.by_candidate[text]
+            vector[0] = target
+            vector[self._axis(text)] = math.sqrt(max(0.0, 1.0 - target * target))
+            return vector
+
+        vector[0] = math.sqrt(self.score)
+        vector[self._axis(text)] = math.sqrt(max(0.0, 1.0 - self.score))
+        return vector
+
+
+class StubSimilarity(Similarity):
+    """Real scoring on stub vectors, counting the calls made into it."""
+
+    def __init__(self, score: float = 0.0, *, by_candidate: dict[str, float] | None = None):
+        super().__init__(StubEmbedder(score, by_candidate=by_candidate))
         self.calls: list[tuple[str, list[str]]] = []
 
-    def scores(self, surface, candidates):
-        self.calls.append((surface, list(candidates)))
-        return [self.by_candidate.get(c, self.score) for c in candidates]
+    def scores(self, text, candidates):
+        self.calls.append((text, list(candidates)))
+        return super().scores(text, candidates)
 
 
 class StubJudge:
@@ -472,16 +530,32 @@ def test_a_mixed_run_splits_the_counts():
     assert resolver.stats.merges == 2
 
 
-def test_a_repeat_decided_by_the_model_is_still_a_repeat():
-    """Novelty is judged on the form, not on which path carried it."""
-    resolver = Resolver(StubSimilarity(0.88), StubJudge(answer=True))
+def test_a_repeat_never_reaches_the_model_whatever_the_band_is_set_to():
+    """Identical text cannot score below 1.0, so a repeat is always fast.
+
+    This became true when the seam moved to the embedder. The same text yields
+    the same vector, and a vector's cosine with itself is exactly 1.0 — so no
+    embedder can put a repeat in the ambiguous band. An earlier version of this
+    test asserted the opposite, which only a stubbed *scoring* function could
+    produce; nothing reachable through a real embedder ever could.
+    """
+    judge = StubJudge(answer=True)
+    resolver = Resolver(StubSimilarity(0.88), judge)
 
     resolver.add(entity("payment_service"))
     resolver.add(entity("payment_service"))
 
     assert resolver.stats.repeats == 1
-    assert resolver.stats.model_merges == 0
-    assert resolver.stats.model_calls == 1
+    assert resolver.stats.fast_merges == 0
+    assert resolver.stats.model_calls == 0
+    assert judge.calls == []
+
+
+def test_identical_text_scores_exactly_one_through_the_real_scorer():
+    """The geometric fact the test above rests on."""
+    similarity = StubSimilarity(0.4)
+
+    assert similarity.scores("payment_service", ["payment_service"])[0] == 1.0
 
 
 def test_the_totals_reconcile_with_what_was_seen():

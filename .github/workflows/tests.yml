@@ -22,13 +22,22 @@ jobs:
           # is how a project starts claiming support it does not test.
           python-version: "3.12"
 
-      # The full install, dependencies included. The packaging test installs
-      # with --no-deps so it stays offline; this is where the real resolution
-      # is exercised.
+      # The full install, dependencies included. `dev` pulls in
+      # sentence-transformers and therefore torch, which entity resolution now
+      # requires — there is no lighter path to fall back to, so CI runs the
+      # real embedder or it runs nothing.
       - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
+
+      # Downloaded once and cached; otherwise every run pays ~90 MB and the
+      # first test to touch the model pays the latency.
+      - name: Cache the sentence-transformer model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-v1
 
       - name: Test
         run: python -m pytest -q

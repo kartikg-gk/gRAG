@@ -50,18 +50,17 @@ examples = ["langgraph>=1.2,<2"]
 #     python -m spacy download en_core_web_sm
 extraction = ["spacy>=3.7,<4"]
 
-# Learned embeddings for entity resolution. Optional for the same reason: the
-# default similarity source is character n-gram cosine from the standard
-# library, which is what catches the orthographic drift this pipeline actually
-# produces (notification-service against notification_service). Embeddings earn
-# their weight on semantic drift, which n-grams cannot reach — and resolution
-# takes its similarity source as an argument, so none of its logic depends on
-# which one is installed.
-embeddings = ["sentence-transformers>=3,<6"]
+# Entity resolution embeds with a sentence-transformer. Not optional in any
+# meaningful sense any more — it is the only embedder — but it stays in a group
+# because it drags in torch, and a consumer who only wants the tracing package
+# should not pay for that. `dev` installs it, and so must CI: there is no
+# lighter default to fall back to.
+embeddings = ["sentence-transformers>=5,<6"]
+
 
 dev = [
     "pytest>=9,<10",
-    "graphrag[adapter,examples]",
+    "graphrag[adapter,examples,embeddings]",
 ]
 
 [project.scripts]

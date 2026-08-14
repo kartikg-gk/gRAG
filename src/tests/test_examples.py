@@ -125,7 +125,18 @@ def test_the_committed_artifact_matches_a_fresh_run(tmp_path):
     fresh = tmp_path / "fresh.json"
     offline_demo.run(fixtures.DEFAULT_QUERY, output=fresh)
 
-    assert fresh.read_bytes() == offline_demo.DEFAULT_OUTPUT.read_bytes(), (
+    def content(path):
+        """Text with line endings normalised.
+
+        The committed file was written on Windows and carries CRLF; the suite
+        now runs under WSL, which writes LF. A byte comparison would fail on
+        that alone and say nothing about behaviour, which is what this test is
+        actually for. ``.gitattributes`` pins the file to LF so the difference
+        stops arising, and this keeps the test honest either way.
+        """
+        return path.read_text(encoding="utf-8").replace(chr(13) + chr(10), chr(10))
+
+    assert content(fresh) == content(offline_demo.DEFAULT_OUTPUT), (
         "examples/demo_trace.json is stale; regenerate with "
         "`python -m examples.offline_demo`"
     )

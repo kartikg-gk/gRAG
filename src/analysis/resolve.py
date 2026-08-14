@@ -73,7 +73,7 @@ from ..common.config import (
     QUERY_THRESHOLD,
 )
 from .extract import Entity
-from .similarity import LexicalSimilarity, Similarity
+from .similarity import Similarity
 
 
 class Judge(Protocol):
@@ -237,7 +237,7 @@ class Resolver:
                 "there would be no band between them"
             )
 
-        self.similarity = similarity if similarity is not None else LexicalSimilarity()
+        self.similarity = similarity if similarity is not None else Similarity()
         self.judge = judge
         self.fast = fast
         self.deep = deep
