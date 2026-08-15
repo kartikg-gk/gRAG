@@ -220,7 +220,8 @@ def test_runtime_dependencies_are_exactly_the_two_that_are_needed():
 
 @pytest.mark.parametrize(
     "package",
-    ["langgraph", "langchain-core", "pytest", "spacy", "sentence-transformers"],
+    ["langgraph", "langchain-core", "pytest", "spacy", "sentence-transformers",
+     "ladybug"],
 )
 def test_test_and_example_only_dependencies_are_optional(package):
     """Nothing needed solely by tests or examples may be a runtime requirement."""

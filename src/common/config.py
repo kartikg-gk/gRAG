@@ -8,10 +8,9 @@ half-lives are keyed by label and that table is the authority. The ingestion
 models keep GitHub's own names (``Repository``, ``PullRequest``, ``Issue``);
 they mirror the API and are a deliberately separate vocabulary.
 
-Only names something actually emits live here. A declared constant with no
-producer reads as a shipped feature, which is why there is no text-proximity
-relation and no label for entity kinds the builder cannot produce. Both arrive
-with the code that emits them.
+Names here generally arrive with the code that emits them, because a declared
+constant with no producer reads as a shipped feature. ``RELATION_CO_OCCURS`` is
+the one exception, and it is deliberate — see the note beside it.
 """
 
 from __future__ import annotations
@@ -38,6 +37,19 @@ RELATION_TOUCHES = "TOUCHES"
 RELATION_PART_OF = "PART_OF"
 RELATION_REPORTED = "REPORTED"
 
+#: Text proximity: two entities mentioned near each other.
+#:
+#: **Declared but never emitted.** Nothing in this project produces a
+#: CO_OCCURS edge yet. The constant and its weight are declared anyway so
+#: the relation vocabulary is complete: a scorer added later needs a name
+#: and a price already agreed, and choosing the price at the moment of the
+#: first producer means choosing it under pressure to flatter that producer.
+#:
+#: If something starts emitting these, the weight below is what makes them lose
+#: to every structural relation: a proximity guess must never outrank an
+#: authorship fact.
+RELATION_CO_OCCURS = "CO_OCCURS"
+
 # --------------------------------------------------------------------------
 # Confidence
 #
@@ -52,6 +64,8 @@ CONFIDENCE = {
     RELATION_TOUCHES: 0.80,
     RELATION_PART_OF: 0.80,
     RELATION_REPORTED: 0.75,
+    # Weakest by a wide margin, and below every structural relation above.
+    RELATION_CO_OCCURS: 0.35,
 }
 
 # --------------------------------------------------------------------------
@@ -143,3 +157,52 @@ QUERY_THRESHOLD = 0.80
 PATH_FAST = "fast"
 PATH_MODEL = "model"
 PATH_NEW = "none"
+
+
+# --------------------------------------------------------------------------
+# Graph store
+#
+# Table names, the embedding dimension, the index name and the distance metric
+# live here rather than in the store, so a rename or a re-index is one edit and
+# the store has nothing to hardcode.
+# --------------------------------------------------------------------------
+
+#: Node table holding canonical entities.
+NODE_TABLE = "Entity"
+
+#: Node table holding raw source documents. Documents are source material, not
+#: canonical entities, so they are a separate table with their own columns.
+DOC_TABLE = "Document"
+
+#: One relationship table, not one per relation type. The relation name is a
+#: STRING column, so AUTHORED and the rest are values rather than tables, and
+#: their weights are the CONFIDENCE values above.
+REL_TABLE = "Related"
+
+#: Document to entity. Its own table because its endpoints differ from every
+#: other relation — Document to Entity rather than Entity to Entity — which is
+#: also why it carries no properties and is absent from the relation constants.
+MENTIONS_TABLE = "Mentions"
+
+#: Width of the embedding column. This must equal the embedding model's output
+#: size: the column is fixed-width at CREATE TABLE time, so it cannot be
+#: derived from the model the way ``Similarity.dimension`` is. Changing the
+#: model to one of a different width means a new database, not a migration.
+EMBEDDING_DIMENSION = 384
+
+#: Vector index over the entity embedding column.
+VECTOR_INDEX_NAME = "entity_embedding_index"
+
+#: Distance metric for that index. Cosine, because embeddings are L2-normalised
+#: before they are stored, which makes cosine distance and the dot product the
+#: same ordering — and lets similarity be recovered as ``1 - distance``.
+VECTOR_METRIC = "cosine"
+
+#: Read connections held open for concurrent queries. The engine serialises
+#: writes but reads scale across connections, so this bounds how many can run
+#: at once rather than how many exist.
+READ_POOL_SIZE = 4
+
+#: Seconds to wait for a free read connection before giving up. A caller that
+#: waits forever on an exhausted pool looks like a hang, not a queue.
+POOL_TIMEOUT_SECONDS = 30.0
