@@ -503,10 +503,22 @@ class ContextGraph:
     def build_vector_index(self, *, rebuild: bool = False) -> None:
         """Create the vector index, or rebuild it over current embeddings.
 
-        The index is built from the rows present when it is created, so writes
-        after that are not searchable until it is rebuilt. Creating one that
-        already exists is an error rather than a no-op, so an existing index is
-        dropped first when rebuilding and tolerated otherwise.
+        **Writes after the build are searchable without a rebuild.** Measured
+        on ladybug 0.19.1: three entities indexed at build time, three more
+        written afterwards with no rebuild, and a query matching a post-build
+        entity returns it top-ranked at similarity 1.000, with all six rows
+        present. There is no staleness window to work around and nothing here
+        tracks one.
+
+        That is a property of the engine, not of this class, which is why
+        ``test_a_write_after_the_index_build_is_searchable`` asserts it rather
+        than trusting this paragraph. A future version could index only the
+        rows present at creation, and then a caller would silently miss recent
+        entities — no error, just absent rows.
+
+        Creating an index that already exists is an error rather than a no-op,
+        so an existing one is dropped first when rebuilding and tolerated
+        otherwise.
         """
         if rebuild:
             try:
