@@ -715,8 +715,20 @@ def _epoch(moment: datetime | None) -> int | None:
     """A datetime as whole seconds, or NULL.
 
     The column is INT64 and this is the only place the conversion happens.
-    ``None`` stays ``None`` rather than becoming ``0``: this project treats an
-    unknown time as unknown, because ``0`` reads as 1970 to a recency scorer.
+
+    **``None`` stays ``None`` rather than becoming ``0``.** Zero is not a
+    neutral filler, it is the first second of 1970 — a real date, and one a
+    recency calculation will happily rank. Collapsing unknown into zero makes
+    every undated entity the oldest thing in the graph, buried under
+    everything with a real timestamp, and nothing downstream can tell that
+    apart from a genuine 1970 record. Absent is not a date and sorts nowhere.
+
+    Nothing scores recency yet, which is why this is written down and pinned
+    by test rather than left to be rediscovered: between the decision and its
+    first consumer there is nothing that would notice the rule breaking.
+    ``test_a_stored_zero_is_distinct_from_absent`` holds the two apart, and a
+    reopen test confirms the property belongs to the column rather than to a
+    live handle.
 
     A naive datetime is read as UTC. Guessing local time would make the same
     document import differently on two machines.

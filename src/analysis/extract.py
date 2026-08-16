@@ -9,6 +9,34 @@ Two stages, in this order and for this reason:
    highest-value things in the text. So they are matched deterministically and
    score 1.0.
 
+   **The rules are standard-library regexes over raw text, and that is a
+   measured choice.** Running the same patterns through a linguistic
+   pipeline's rule matcher instead was measured on the verification corpus,
+   both sides in one interpreter:
+
+       cold start      0.06s -> 1.23s to the first entity  (20x)
+       extraction      0.345ms -> 2.221ms over the corpus  (6.45x)
+       resident memory +65 MiB, flat across 100 passes
+       installed size  +160 MiB on disk
+       entities found  23 -> 22
+
+   The 6.45x does not amortise. Load cost falls from 99% of a ten-document run
+   to 8% of a ten-thousand-document one, but the per-document penalty stays, so
+   ten thousand documents are still 7x slower. There is no crossover.
+
+   The missing entity is the structural part, not a tuning gap. A pipeline
+   tokenises ``[#42](https://github.com/...)`` with the number glued to the
+   URL — ``['[', '#', '42](https://github.com', ...]`` — and a matcher working
+   on token boundaries cannot see a reference that does not occupy whole
+   tokens. A regex over raw text can. No pattern rewrites around it; two
+   earlier misses in the same measurement *were* pattern bugs and were fixed
+   before the number above was taken, which is how this one is known to be
+   different.
+
+   It also cannot run everywhere. The pipeline is absent from the interpreter
+   that runs this suite, so adopting it would make the rule stage — currently
+   dependency-free — require something the test environment does not have.
+
 2. **Statistical NER**, for the open-ended remainder: people, organisations,
    products. Its generic labels reach domain labels through ``LABEL_MAP`` and
    nowhere else, so what the model calls something is translated in exactly one

@@ -157,10 +157,21 @@ class Similarity:
     def identity(self) -> str:
         """Which embedding scheme every stored vector was produced by.
 
-        Recorded alongside the vectors so a store written by a different
-        embedder is detectable. Without it a stale store is invisible: the
-        vectors are the right shape and score to plausible numbers that mean
-        nothing.
+        **Recorded because a dimension check cannot detect a different
+        embedder.** Two models can output the same width — 384 is a common
+        one — so a store written by one and read by the other passes every
+        length check in this module. The vectors are the right shape, the dot
+        products are in range, and the scores mean nothing. There is no
+        symptom to notice.
+
+        The identity is the only thing that separates those two stores.
+        ``test_a_store_from_a_different_embedder_is_refused`` asserts the equal
+        dimension explicitly before asserting the rejection, so the reader can
+        see the length check passing and doing no work.
+
+        Both checks run on load and neither implies the other: a different
+        model can share a dimension, and a different dimension can arrive under
+        an identity string someone forgot to bump.
         """
         return getattr(
             self.embedder,

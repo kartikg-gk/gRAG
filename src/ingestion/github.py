@@ -86,7 +86,21 @@ class GitHubTransportError(GitHubError):
 
     Separated from ``GitHubError`` because it is the one failure with no status
     code that is still worth retrying. Judging it by ``status_code is None``
-    would also sweep in malformed-payload errors, which retrying cannot fix.
+    would also sweep in malformed-payload errors, which retrying cannot fix —
+    a response that arrived and could not be parsed will not parse on the
+    second attempt, and re-requesting it spends a rate-limit token to learn
+    nothing.
+
+    This type exists because the absence of a status code means two different
+    things and only one of them is transient. A dedicated type says which,
+    where a ``None`` check can only say "no status".
+
+    Worth recording how this was found: a timeout used to be permanent, since
+    the transience predicate required a status code and a transport failure has
+    none. A test asserted that permanence — so the suite was not silent about
+    the behaviour, it was defending it. Inverting that test was part of the
+    fix, which is why a green suite is not by itself evidence that a rule is
+    the intended one.
     """
 
 
@@ -182,9 +196,25 @@ def _request(
 ) -> httpx.Response:
     """GET ``url``, retrying only what a retry could fix.
 
+    **The retry belongs here, around one request, and not around the caller.**
+    A list endpoint is walked page by page, and a failure on page nine of
+    twelve is a failure of that page only. Retrying at this level resumes on
+    the page that failed; retrying around the caller can only restart the walk
+    from page one, re-fetching eight pages that already succeeded and paying
+    their rate-limit cost again. There is no way to express "resume here" from
+    outside the loop, because the caller does not hold the cursor.
+
+    It also reaches everything. Placed at one call site, a retry protects that
+    call site; placed here, it covers the repository, pull request, issue and
+    commit fetches alike, none of which would otherwise have any.
+
     Bounded at ``retry.MAX_ATTEMPTS`` total attempts. When they are exhausted
     the last exception propagates unchanged — there is no partial result and no
     bookkeeping, so a top-level fetch either completes or aborts the ingest.
+
+    Exactly one layer retries. A second retry wrapped around a caller of this
+    would multiply, not add: three attempts here inside three attempts there is
+    nine requests for one logical fetch.
     """
     return with_retry(
         lambda: _request_once(session, url, params),
