@@ -13,8 +13,11 @@ Every run produces a byte-identical artifact, so the file can be committed and
 diffed.
 
 Read this file top to bottom: the four SDK calls at the end of ``run`` are the
-entire integration. Note that ``examples/workflow.py`` — the part you would
-replace with your own code — imports nothing from ``src.tracing``.
+entire integration. Note where they are — all of them here, none of them in
+``examples/workflow.py``, which is the part you would replace with your own
+code. The workflow does import ``overlap_score``, but as a lexical-similarity
+utility for ranking and not as instrumentation; it creates no trace and records
+nothing.
 """
 
 from __future__ import annotations

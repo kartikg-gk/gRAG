@@ -1,10 +1,20 @@
 """The demo workflow: retrieve, then answer.
 
-This module is the one a developer replaces with their own code, so it is worth
-noticing what it does *not* import: nothing from ``src.tracing``. The workflow
-has no idea it is being observed. Instrumentation happens in the demo
+This module is the one a developer replaces with their own code. It imports
+``overlap_score`` and nothing else from ``src.tracing``, and it imports it as a
+lexical-similarity utility rather than as instrumentation: ``retrieve`` uses it
+to rank nodes against the query, ``answer`` uses it to decide which retrieved
+items belong together. No trace is created here, nothing is recorded, and
+neither function knows a trace exists. Instrumentation happens in the demo
 entrypoints, which wrap these calls — that is the integration pattern the
 examples exist to show.
+
+That distinction is load-bearing, so it is worth stating rather than leaving to
+be inferred. Overlap scoring lives in its own module because it has consumers
+that are not the tracer, and this is one of them: two calls here that would
+have to keep working if tracing were removed entirely. A reader who believed
+the scoring function had a single consumer would reasonably conclude it could
+be folded into the tracer and the module deleted.
 
 Both functions are deliberately small and dependency-free. This is not the
 project's retrieval layer; that lives in ``src/retrieval/`` and is a separate
