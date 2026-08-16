@@ -1,22 +1,18 @@
 """The one place fetched items are put into a defined order.
 
-**Sorting is required here, and the reason for it.** Three things make
-arrival order reach the output, and none of them is optional. The sequence
-a build sees decides what the graph says, so it cannot be left to whatever
-the network returned first.
+Sorting is required here, for three reasons that compound.
 
 First, entity labels are first-seen-wins. Whichever surface form is read first
 becomes the label permanently, so arrival order decides what a thing is called.
 
-Second, we diff runs against committed output. An ordering that wobbles between
-runs produces a diff with no change in it, which trains everyone to ignore
-diffs.
+Second, runs are diffed against committed output. An ordering that wobbles
+between runs produces a diff with no change in it, which trains everyone to
+ignore diffs.
 
-Third, the order an API returns is not part of its contract. List endpoints
-send ``sort`` and ``direction`` explicitly rather than trusting a server
-default, and sorting locally on top of that makes the result independent
-of that choice, and of any future change to GitHub's
-default ordering.
+Third, the order the API returns is not a contract. List endpoints send ``sort``
+and ``direction`` explicitly rather than trusting a server default, and sorting
+locally on top of that makes the result independent of any future change to
+GitHub's default ordering.
 
 Sorting happens **once**, between fetch and corpus construction, and nowhere
 else. A sort repeated at each call site is a sort that will eventually disagree

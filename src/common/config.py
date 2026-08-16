@@ -39,11 +39,11 @@ RELATION_REPORTED = "REPORTED"
 
 #: Text proximity: two entities mentioned near each other.
 #:
-#: **Declared but never emitted.** Nothing in this project produces a
-#: CO_OCCURS edge yet. The constant and its weight are declared anyway so
-#: the relation vocabulary is complete: a scorer added later needs a name
-#: and a price already agreed, and choosing the price at the moment of the
-#: first producer means choosing it under pressure to flatter that producer.
+#: **Declared but never emitted.** Nothing produces a CO_OCCURS edge yet. The
+#: constant and its weight are declared anyway so the relation vocabulary is
+#: complete: a scorer added later needs a name and a price already agreed, and
+#: choosing the price at the moment of the first producer means choosing it
+#: under pressure to make that producer's output look reasonable.
 #:
 #: If something starts emitting these, the weight below is what makes them lose
 #: to every structural relation: a proximity guess must never outrank an
@@ -133,10 +133,11 @@ DEEP_THRESHOLD = 0.85
 #: to be generous — that is what lets a query for ``notification_service`` reach
 #: an entity labelled ``notification-service`` without any alias table.
 #:
-#: **Set from measurement rather than intuition.** A floor at roughly half
-#: the merge threshold — 0.40 — is the intuitive choice and it is wrong
-#: here. That intuition assumes a scorer where unrelated strings land near
-#: zero; character n-grams do not. Measured over the demo corpus's
+#: **Set from measurement.** A floor at roughly half the merge threshold —
+#: 0.40 — is the intuitive choice and it is wrong here. That intuition assumes
+#: a scorer where unrelated strings land near zero; character n-grams do not
+#: behave that way, because two unrelated strings still share characters.
+#: Measured over the demo corpus's
 #: canonical set — entities resolution kept apart, so a query must never
 #: confuse them — the highest scoring known-distinct pair is
 #: ``'pull request #1347'`` against ``'pull request #204'`` at 0.7030, because

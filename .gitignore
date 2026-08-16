@@ -1,14 +1,32 @@
 .venv/
 __pycache__/
 *.py[cod]
-.pytest_cache/
 .env
+
+# Tests live on disk and run locally; they are not tracked.
+src/tests/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+
+# Scratch databases the suite and the demos write.
+*.db
+*.kz
+*.ladybug
+graph_store/
+*.duckdb
 
 # Documentation and instruction files stay local, untracked.
 *.md
 # except the root one, which the outside world reads. Anchored with a leading
-# slash: a bare "!README.md" would also un-ignore src/tracing/README.md and the
-# other per-package notes, which are meant to stay local.
+# slash: a bare "!README.md" would also un-ignore any package-level file.
 !/README.md
 
 # Build artifacts.

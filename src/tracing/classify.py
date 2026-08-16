@@ -38,13 +38,18 @@ __all__ = [
 def overlap_score(content: str, answer: str) -> float:
     """What fraction of the answer's tokens appear in ``content``.
 
-    **Answer coverage, deliberately.** The other direction — what fraction
-    of the *item* appears in the answer — punishes long documents, since a
-    thousand-line file that supplied the one function the answer quoted
-    scores near zero and looks unused. Measuring against the answer instead
-    asks what the answer actually drew on, which is the question the trace
-    exists to answer. Do not invert
-    this.
+    **The answer is the denominator, deliberately. Do not invert this.** The
+    other direction — what fraction of the *item* appears in the answer —
+    punishes long documents: a thousand-line file that supplied the one
+    function the answer quoted scores near zero and looks unused. Measured, a
+    file supplying every token of the answer drops below the threshold once it
+    carries about 36 tokens it did not contribute, and real source files carry
+    hundreds. Dividing by the answer asks what the answer actually drew on,
+    which is the question a trace exists to answer.
+
+    Both directions are asserted against each other in
+    ``test_trace_classify.py``, on a document long enough to tell them apart —
+    the demo corpus tops out at 20 tokens and cannot.
 
     Returns 0.0 when either side has no tokens, so an empty answer never makes
     everything look used.

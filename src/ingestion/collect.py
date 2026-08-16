@@ -5,12 +5,12 @@ one request — see ``github._request`` — and this decides what the run does w
 that has already been tried and still failed. Retrying is not repeated here;
 doing both would give one enrichment call nine attempts instead of three.
 
-**Deliberate, and not to be "corrected" back.** Aborting an entire fetch
-because one pull request's enrichment call failed loses the other forty-nine
-pull requests, the issues, and the commits. That is a real defect regardless of
-what a simpler arrangement would do. Enrichment is per item and degrades per
-item; the count of what was lost travels with the graph so a partial result is
-never mistaken for a complete one.
+**Enrichment degrades per item; do not make it abort the run.** Aborting an
+entire fetch because one pull request's enrichment call failed loses the other
+forty-nine pull requests, the issues, and the commits — a whole ingest thrown
+away for one missing review list. So a failed item is dropped and the walk
+continues, and the count of what was lost travels with the graph so a partial
+result is never mistaken for a complete one.
 """
 
 from __future__ import annotations

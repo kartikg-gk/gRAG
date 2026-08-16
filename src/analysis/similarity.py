@@ -2,8 +2,7 @@
 
 One embedder, one scoring path, no abstraction over either. Text becomes a
 dense vector from a sentence-transformer; vectors are L2-normalised; a score is
-a dot product against the candidate matrix. That is the whole module, and it is
-the flow the module commits to.
+a dot product against the candidate matrix. That is the whole module.
 
 There is deliberately no embedder interface and no way to select one by name.
 An interface with a single usable implementation is not flexibility — it is
@@ -58,9 +57,9 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
-#: The embedding model. Its output size is the vector dimension, which is
-#: therefore taken from the model rather than configured — there is no
-#: dimension to choose and nothing to tune.
+#: Its output size is the vector dimension, which is therefore taken from the
+#: model rather than configured — there is no dimension to choose and nothing
+#: to tune.
 MODEL_NAME = "all-MiniLM-L6-v2"
 
 _model = None
