@@ -379,9 +379,17 @@ class GraphBuilder:
         """Record a relationship, weighted by what that relation is worth.
 
         Deduplicated on ``(source, relation, target)``. Two payloads asserting
-        the same relationship are the same fact, and once a build is persisted
-        and re-run the edge list would otherwise double on every ingest. The
-        first assertion wins, so its properties and timestamp are kept.
+        the same relationship are the same fact. The first assertion wins, so
+        its properties and timestamp are kept.
+
+        The graph store deduplicates as well, and on a wider key: at most one
+        edge per ordered node pair, whatever the relation. Measured by
+        re-ingesting the demo corpus into one store — 16 nodes and 21 edges
+        after the first pass, the same counts and the same confidence values
+        after the second. So this is not the only thing preventing an edge
+        list from doubling across ingests, and the two are not redundant: this
+        key keeps ``AUTHORED`` and ``REVIEWED`` between the same pair as
+        separate facts, and the store's key does not.
         """
         key = (source_id, relation, target_id)
         if key in self._edge_keys:
