@@ -1,4 +1,4 @@
-"""Measure how much of an answer each retrieved item accounts for.
+"""Measure how much of each retrieved item the answer took up.
 
 Two separate things live here, and keeping them separate is the point:
 
@@ -36,16 +36,20 @@ __all__ = [
 
 
 def overlap_score(content: str, answer: str) -> float:
-    """What fraction of the answer's tokens appear in ``content``.
+    """What fraction of ``content``'s tokens appear in the answer.
 
-    **The answer is the denominator, deliberately. Do not invert this.** The
-    other direction — what fraction of the *item* appears in the answer —
-    punishes long documents: a thousand-line file that supplied the one
-    function the answer quoted scores near zero and looks unused. Measured, a
-    file supplying every token of the answer drops below the threshold once it
-    carries about 36 tokens it did not contribute, and real source files carry
-    hundreds. Dividing by the answer asks what the answer actually drew on,
-    which is the question a trace exists to answer.
+    **The item is the denominator.** The score asks how much of the retrieved
+    item the answer actually took up, so it measures the item's density rather
+    than the answer's sourcing. An item that is entirely reflected in the
+    answer scores 1.0 however short the answer is; an item carrying a great
+    deal the answer never touched scores low however much of the answer it
+    supplied.
+
+    The consequence to know when reading a trace: the score is bounded by
+    ``|answer ∩ item| / |item|``, so a long item cannot score highly against a
+    short answer. On this corpus the answer holds 21 tokens and the median item
+    holds 5, so the ceiling is not binding; on a corpus of long source files it
+    is, and items will cluster near zero.
 
     Both directions are asserted against each other in
     ``test_trace_classify.py``, on a document long enough to tell them apart —
@@ -62,7 +66,7 @@ def overlap_score(content: str, answer: str) -> float:
     if not item_tokens:
         return 0.0
 
-    return len(answer_tokens & item_tokens) / len(answer_tokens)
+    return len(answer_tokens & item_tokens) / len(item_tokens)
 
 
 def is_used(overlap: float | None, threshold: float = DEFAULT_THRESHOLD) -> bool | None:
