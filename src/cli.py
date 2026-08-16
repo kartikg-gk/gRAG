@@ -133,6 +133,9 @@ def _ingest(args: argparse.Namespace, session: httpx.Client | None) -> int:
     if args.output and not _write_graph(builder, stats, args.output):
         return 1
 
+    if args.store and not _write_store(builder, args.store, embed=args.embed):
+        return 1
+
     _report(args.repository, stats)
     return 0
 
@@ -188,6 +191,60 @@ def _write_graph(builder: GraphBuilder, stats, destination: str) -> bool:
     except OSError as exc:
         print(f"could not write {destination}: {exc}", file=sys.stderr)
         return False
+    return True
+
+
+def _write_store(builder: GraphBuilder, destination: str, *, embed: bool) -> bool:
+    """Write the graph to a store. Returns False if it could not be written.
+
+    Imported here rather than at module scope on purpose. The store needs a
+    database driver and embedding needs a model, and neither is a dependency of
+    ``ingest --output`` or of ``view``. A top-level import would make every
+    invocation of this CLI pay for both, including the ones that never touch a
+    store.
+
+    The vector index is built after every write, in one pass. Indexing costs a
+    pass over the rows, so doing it once at the end is one pass rather than one
+    per batch, and it lets the two costs be timed apart.
+    """
+    from .graphdb import open_context_graph
+    from .knowledge.persist import persist
+
+    embedder = None
+    if embed:
+        from .analysis import Similarity
+
+        embedder = Similarity()
+
+    from .analysis import Extractor
+
+    try:
+        store = open_context_graph(destination)
+    except Exception as exc:
+        print(f"could not open {destination}: {exc}", file=sys.stderr)
+        return False
+
+    try:
+        written = persist(
+            store, builder, embedder=embedder, extractor=Extractor("none")
+        )
+        store.build_vector_index(rebuild=True)
+    except Exception as exc:
+        print(f"could not write {destination}: {exc}", file=sys.stderr)
+        return False
+    finally:
+        store.close()
+
+    print(f"  store {destination}")
+    print(
+        f"    {written.entities} entities "
+        f"({written.entities_from_text} from document text), "
+        f"{written.relationships} relationships"
+    )
+    print(
+        f"    {written.documents} documents, {written.mentions} mentions, "
+        f"{written.embedded} embedded"
+    )
     return True
 
 
@@ -257,7 +314,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-files", dest="files", action="store_false", help="skip changed files"
     )
     ingest.add_argument("--output", metavar="PATH", help="write the graph as JSON")
-    ingest.set_defaults(handler=_ingest, reviews=True, files=True)
+    # Independent of --output. Both may be given, and the two destinations
+    # receive the same build, so a JSON file and a store written in one run are
+    # comparable row for row.
+    ingest.add_argument(
+        "--store", metavar="PATH", help="write the graph to a graph store"
+    )
+    ingest.add_argument(
+        "--no-embed",
+        dest="embed",
+        action="store_false",
+        help="write the store without entity vectors, skipping the model load",
+    )
+    ingest.set_defaults(handler=_ingest, reviews=True, files=True, embed=True)
 
     view = commands.add_parser("view", help="render a saved trace")
     view.add_argument("trace", help="path to a trace JSON file")
