@@ -413,9 +413,39 @@ class ContextGraph:
     def upsert_document(self, document_id: str, path: str, content: str) -> None:
         """Store a source document, refreshing its path and text if re-ingested.
 
-        Unlike an entity, a document's content is **not** write-once: the file
-        changed, and the newer text is the source of truth. An entity's label is
-        a name we chose; a document's content is what is actually there.
+        A document's content is **not** write-once, where an entity's label is:
+        the file changed, and the newer text is what is there. A label is a
+        name chosen once; content is a fact about the file right now.
+
+        **OPEN: whether the content column should exist at all.**
+
+        Measured. Storing the text costs 1.005 stored bytes per raw byte —
+        real source text does not compress in this store — which is 33.2% of
+        the store across 67 project files, projecting to about 65 MB at 10,000
+        documents. Not free, and not alarming either.
+
+        Counted. Production call sites for the document half of this class:
+        zero. Nothing writes a document, because graph construction still
+        emits JSON and never reaches the store. Every exercise of these
+        methods is a test.
+
+        That is not enough to remove the column. Storage with no consumer
+        looks like pure cost, but the reason there is no consumer is that the
+        thing that would write documents has not been connected yet — absence
+        of a reader today says nothing about whether retrieval will want the
+        text tomorrow. Deleting the column now would be deciding a question on
+        the strength of unfinished work.
+
+        What would settle it. A production caller appearing. At that moment
+        the question is answerable by reading one thing: does the caller read
+        ``content`` back, or only ``path`` and the mention edges? If only the
+        latter, the column goes.
+
+        ``test_no_production_code_calls_the_document_api`` is what surfaces
+        that moment. It is **supposed to fail** when the store is wired up.
+        Re-pinning it would throw away the signal it exists to give; the
+        correct response is to answer the question above and replace the test
+        with one that pins the answer.
         """
         self.execute(
             f"MERGE (d:{DOC_TABLE} {{id: $id}}) "

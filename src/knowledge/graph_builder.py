@@ -382,14 +382,37 @@ class GraphBuilder:
         the same relationship are the same fact. The first assertion wins, so
         its properties and timestamp are kept.
 
-        The graph store deduplicates as well, and on a wider key: at most one
-        edge per ordered node pair, whatever the relation. Measured by
-        re-ingesting the demo corpus into one store — 16 nodes and 21 edges
-        after the first pass, the same counts and the same confidence values
-        after the second. So this is not the only thing preventing an edge
-        list from doubling across ingests, and the two are not redundant: this
-        key keeps ``AUTHORED`` and ``REVIEWED`` between the same pair as
-        separate facts, and the store's key does not.
+        **OPEN: whether this deduplication is needed here has not been
+        established.** It is reasoned about below, not decided, and the
+        distinction matters — an unknown left uncommented reads as a settled
+        choice once the comment is a year old, and then nobody re-opens it.
+
+        What is known. The store deduplicates too, on a wider key: at most one
+        edge per ordered node pair, whatever the relation. Measured by pushing
+        the demo corpus into one store twice — 16 nodes and 21 edges after the
+        first pass, the same counts and the same confidence values after the
+        second. So the store alone already prevents an edge list doubling
+        across ingests, and this stage is not what stands between a re-ingest
+        and duplicates.
+
+        What is not known. Whether a real re-ingestion produces duplicate
+        edges at this level at all. The demo corpus cannot answer it: its 21
+        edges are 21 distinct node pairs, and no payload in it asserts the
+        same relationship twice. ``duplicate_edges_skipped`` counts what this
+        branch catches, and on that corpus it counts nothing.
+
+        What would settle it. Running an ingest of a repository that genuinely
+        repeats a relationship — the same review recorded twice, the same file
+        touched by two payloads — with persistence in use, and reading
+        ``duplicate_edges_skipped``. A non-zero count means this stage is
+        removing something the store's wider key would have merged into a
+        single row anyway, and the question becomes whether losing the weaker
+        relation there is acceptable. A zero count across real repositories
+        means this branch is dead and can go.
+
+        Until then it stays. It costs one set lookup per edge, and the failure
+        it would prevent — an edge list doubling on every ingest — is worse
+        than the cost of keeping an untested guard.
         """
         key = (source_id, relation, target_id)
         if key in self._edge_keys:
