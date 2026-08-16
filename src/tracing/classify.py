@@ -38,20 +38,44 @@ __all__ = [
 def overlap_score(content: str, answer: str) -> float:
     """What fraction of ``content``'s tokens appear in the answer.
 
-    **The item is the denominator.** The score asks how much of the retrieved
-    item the answer actually took up, so it measures the item's density rather
-    than the answer's sourcing. An item that is entirely reflected in the
-    answer scores 1.0 however short the answer is; an item carrying a great
-    deal the answer never touched scores low however much of the answer it
-    supplied.
+    **The item is the denominator, and that fixes what the number means.** The
+    score answers *how much of this item reached the answer*. A large file that
+    contributed a few words scores low and reads as waste, which is the
+    judgement wanted: retrieval that hauls in a thousand lines to use six of
+    them is retrieval worth seeing. Dividing by the answer's tokens instead
+    would answer *where the answer came from* — a real question, but a
+    different one, and not the one this measurement is for.
 
-    The consequence to know when reading a trace: the score is bounded by
-    ``|answer ∩ item| / |item|``, so a long item cannot score highly against a
-    short answer. On this corpus the answer holds 21 tokens and the median item
-    holds 5, so the ceiling is not binding; on a corpus of long source files it
-    is, and items will cluster near zero.
+    The ceiling, and why it decides the unit rather than the threshold
+    -----------------------------------------------------------------
 
-    Both directions are asserted against each other in
+    The intersection cannot be larger than the answer, so for an answer of
+    ``N`` tokens the highest score any item can reach is ``N / |I|``. Clearing
+    a threshold ``t`` therefore requires ``|I| <= N / t`` — at ``t = 0.2``,
+    ``|I| <= 5N``. Past that length an item is unreachable no matter how
+    relevant it is, because every token it holds beyond ``5N`` is denominator
+    it can never match.
+
+    **The fix for that is chunk-sized items, not a lower threshold.** A
+    threshold low enough to admit a thousand-token file admits everything else
+    too, and the measurement stops discriminating at all. Length is the lever.
+
+    Headroom on the corpus as it stands, measured over both stored traces:
+
+        items                     14
+        largest item              16 tokens
+        median item                5 tokens
+        answers                   17 and 21 tokens
+        limit at threshold 0.2    |I| <= 85 and <= 105 tokens
+        ceiling, median item      min(21, 5) / 5 = 1.00
+
+    So nothing is near the ceiling here — the largest item is 16 tokens
+    against a limit of 105, and every item shorter than the answer can still
+    reach 1.0. Real source files average 8,378 bytes, hundreds of tokens, and
+    would sit far past it. ``test_an_item_longer_than_the_ceiling_allows_
+    cannot_reach_the_threshold`` pins the arithmetic.
+
+    Both denominators are asserted against each other in
     ``test_trace_classify.py``, on a document long enough to tell them apart —
     the demo corpus tops out at 20 tokens and cannot.
 
