@@ -207,3 +207,95 @@ READ_POOL_SIZE = 4
 #: Seconds to wait for a free read connection before giving up. A caller that
 #: waits forever on an exhausted pool looks like a hang, not a queue.
 POOL_TIMEOUT_SECONDS = 30.0
+
+
+# --------------------------------------------------------------------------
+# Retrieval
+#
+# Every value here is overridable from the environment. These bound how much
+# work a query does and how permissive it is, and both are properties of the
+# corpus rather than of the code — a setting that is right for a sixteen-node
+# graph is not right for a repository with ten thousand pull requests, and
+# nobody should have to edit a source file to find that out.
+# --------------------------------------------------------------------------
+
+
+def _env_int(name: str, default: int) -> int:
+    """An integer from the environment, or the default.
+
+    A malformed value falls back rather than raising. A typo in a shell
+    variable should not stop the process from starting, and the default is
+    always a working setting.
+    """
+    import os
+
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """A float from the environment, or the default. Malformed falls back."""
+    import os
+
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+#: How many hops traversal may take from a seed.
+#:
+#: Measured on the demo graph, mean share of the graph reached from an average
+#: seed: 1 hop 17%, 2 hops 53%, 3 hops 89%, 4 hops 100%. The bound sits where
+#: reach stops being selective — at 3 the traversal returns almost everything
+#: and the score is doing all the discriminating, which leaves the bound with
+#: no work to do.
+#:
+#: **Those figures come from a 16-node graph and describe a toy.** The point at
+#: which reach stops being selective moves with graph size and with how hub-like
+#: the graph is; on a real repository 2 hops from a pull request reaches its
+#: author and then every pull request that author touched, which may be
+#: hundreds. Anyone raising this to 3 should meet the 89% first and re-measure
+#: on the corpus they actually have.
+#:
+#: Confidence decay already bounds depth on its own — a path multiplies, so
+#: 0.95 twice is 0.90 while 0.35 twice is 0.12. This bound is a rail against
+#: runaway traversal rather than the thing shaping results.
+MAX_HOPS = _env_int("GRAPHRAG_MAX_HOPS", 2)
+
+#: Lowest vector similarity that may seed a traversal.
+#:
+#: **No measurement stands behind this number yet.** It is a starting point
+#: chosen to make traversal runnable, and the seed tier firing rates are what
+#: would justify moving it. Treat it as unmeasured until those exist.
+#:
+#: It sits far below the merge thresholds on purpose. A merge permanently
+#: combines two records and cannot be undone, so it demands near-certainty; a
+#: seed only decides where to start looking, and a wrong seed costs a traversal
+#: that finds nothing. The query side can afford to be generous where the write
+#: side cannot.
+SEED_MIN_SIM = _env_float("GRAPHRAG_SEED_MIN_SIM", 0.35)
+
+#: How many fuzzy seeds tier 2 may contribute.
+#:
+#: A cap, not a floor. Without it a permissive ``SEED_MIN_SIM`` seeds traversal
+#: from the whole vector result set, and the graph arm stops being a traversal
+#: from somewhere specific — it becomes a walk from everywhere, which returns
+#: the graph and ranks it by nothing the traversal contributed.
+SEED_TOP_N = _env_int("GRAPHRAG_SEED_TOP_N", 3)
+
+#: Per-relation degree above which a node's neighbours are suppressed.
+#:
+#: Grouped per relation rather than per node. A repository node with 10,000
+#: TOUCHES edges and 3 AUTHORED edges should lose the file list and keep the
+#: authorship; capping per node would drop both, discarding the useful half
+#: because the other half is broad.
+MAX_DEGREE = _env_int("GRAPHRAG_MAX_DEGREE", 10)
+
+#: How many results each arm returns. Separate constants because the two arms
+#: are measured against each other and a shared value would make a difference
+#: in their result counts impossible to attribute.
+TOP_K_VECTOR = _env_int("GRAPHRAG_TOP_K_VECTOR", 10)
+TOP_K_GRAPH = _env_int("GRAPHRAG_TOP_K_GRAPH", 10)
