@@ -13,21 +13,25 @@ one run, and the two are comparable row for row.
 What a document is
 ------------------
 
-The builder keeps a node's identifying text — a pull request's title, a
-commit's message, a file's path — and does not keep the longer bodies those
-payloads carried. So a document here is a node's own text, not the full
-original prose. That is worth knowing when reading mention edges: a pull
-request contributes its title, so a ticket reference living only in the body is
-not extracted and produces no mention. Extending this means the builder
-retaining bodies, which is a change to what the JSON path emits and therefore
-its own decision.
+Documents are supplied by the caller, built from the payloads by
+``knowledge.documents``. They are not derived from nodes: a node keeps a
+thing's identity and not the prose it arrived with, so deriving documents from
+nodes finds titles where the references live in bodies. Measured on the
+verification fixtures, that produced 0 entities against the 2 present.
 
-Entities found in that text are written as nodes so a mention has something to
-point at. Ticket and pull request references are mapped onto the same id scheme
-the builder uses, so ``#12`` in a commit message produces a mention edge
-pointing at the ticket node that already exists rather than at a second node
-describing the same ticket. Entity types with no structural counterpart —
-services, organisations, products — get an id built from their type and label.
+Entities found in document content are written as nodes so a mention has
+something to point at. Ticket and pull request references are mapped onto the
+same id scheme the builder uses, so ``#12`` in a commit message produces a
+mention edge pointing at the ticket node that already exists rather than at a
+second node describing the same ticket. Entity types with no structural
+counterpart — services, organisations, products — get an id built from their
+type and label.
+
+Extraction runs over the text held in memory, before it is written. Nothing
+here reads a stored document back, so writing documents does not make this a
+reader of the ``content`` column — a distinction that matters, because whether
+that column has a reader is still an open question and this is not the thing
+that answers it.
 
 Embeddings
 ----------
@@ -110,8 +114,17 @@ class PersistStats:
     mentions: int = 0
     embedded: int = 0
     entities_from_text: int = 0
-    documents_without_text: int = 0
+    documents_without_entities: int = 0
     per_relation: dict[str, int] = field(default_factory=dict)
+    #: Mentions pointing at a node the structural pass already created,
+    #: against mentions that had to create one. The split says whether
+    #: extraction is finding things the graph already knows about or adding
+    #: to it, and those are different kinds of value.
+    mentions_to_existing: int = 0
+    mentions_to_new: int = 0
+    #: Entities found, by the payload field their document came from. A total
+    #: alone cannot say whether review bodies were worth reading.
+    entities_by_field: dict[str, int] = field(default_factory=dict)
 
 
 def node_text(node: dict[str, Any]) -> str:
@@ -163,6 +176,7 @@ def persist(
     *,
     embedder: Embedder | None = None,
     extractor: Extractor | None = None,
+    documents: Iterable[Any] = (),
 ) -> PersistStats:
     """Write every node, edge, document and mention into ``store``.
 
@@ -202,28 +216,40 @@ def persist(
         stats.relationships += 1
         stats.per_relation[edge["type"]] = stats.per_relation.get(edge["type"], 0) + 1
 
-    if extractor is not None:
-        _write_documents(store, builder, extractor, embedder, stats)
+    _write_documents(store, builder, documents, extractor, embedder, stats)
 
     return stats
 
 
-def _write_documents(store, builder, extractor, embedder, stats: PersistStats) -> None:
-    """A document per node, and a mention per entity found in its text."""
-    for node in builder.nodes.values():
-        text = node_text(node)
-        doc_id = document_id(node["id"])
-        store.upsert_document(doc_id, node_path(node), text)
+def _write_documents(
+    store, builder, documents, extractor, embedder, stats: PersistStats
+) -> None:
+    """Store each document, and a mention per entity found in its content.
+
+    Documents are written whether or not an extractor is supplied. The text is
+    the source record; mentions are an interpretation of it, and a caller that
+    wants the prose stored without paying for extraction should get that.
+    """
+    known = set(builder.nodes)
+
+    for document in documents:
+        store.upsert_document(document.id, document.path, document.content)
         stats.documents += 1
 
-        found = list(extractor.extract(text))
+        if extractor is None:
+            continue
+
+        found = list(extractor.extract(document.content))
         if not found:
-            stats.documents_without_text += 1
+            stats.documents_without_entities += 1
             continue
 
         for entity in found:
             target = entity_id(entity)
-            if target not in builder.nodes:
+
+            if target in known:
+                stats.mentions_to_existing += 1
+            else:
                 # An entity the structural pass never produced — a service
                 # name, or a reference to something outside what was ingested.
                 # It still needs a node for the mention to point at.
@@ -236,9 +262,14 @@ def _write_documents(store, builder, extractor, embedder, stats: PersistStats) -
                         embedder.vector(entity.text) if embedder is not None else None
                     ),
                 )
+                known.add(target)
                 stats.entities_from_text += 1
+                stats.mentions_to_new += 1
                 if embedder is not None:
                     stats.embedded += 1
 
-            store.add_mention(doc_id, target)
+            store.add_mention(document.id, target)
             stats.mentions += 1
+            stats.entities_by_field[document.field] = (
+                stats.entities_by_field.get(document.field, 0) + 1
+            )

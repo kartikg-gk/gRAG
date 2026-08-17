@@ -37,6 +37,7 @@ from .ingestion import (
     make_session,
 )
 from .knowledge import GraphBuilder
+from .knowledge.documents import source_documents
 from .tracing import DEFAULT_THRESHOLD, load, render
 
 DEFAULT_PRS = 50
@@ -106,22 +107,39 @@ def _ingest(args: argparse.Namespace, session: httpx.Client | None) -> int:
             else ({}, 0)
         )
 
+        # Materialised rather than passed as generators straight into build().
+        # The bodies these carry are needed twice — once by node construction
+        # and once to build source documents — and a generator can only be
+        # walked once. The sort order is unchanged; only the point at which
+        # the sequence is realised moves.
+        issues = in_ingest_order(
+            fetch_issues(session, args.repository, limit=args.issues)
+        )
+        commits = in_ingest_order(
+            fetch_commits(session, args.repository, limit=args.commits)
+        )
+
         builder = GraphBuilder()
         stats = builder.build(
             repository=repository,
             pull_requests=pull_requests,
-            issues=in_ingest_order(
-                fetch_issues(session, args.repository, limit=args.issues)
-            ),
-            commits=in_ingest_order(
-                fetch_commits(session, args.repository, limit=args.commits)
-            ),
+            issues=issues,
+            commits=commits,
             reviews=reviews,
             changed_files=changed_files,
             enrichment_failures_by_stage={
                 STAGE_REVIEWS: review_failures,
                 STAGE_CHANGED_FILES: file_failures,
             },
+        )
+
+        # Built from the payloads, not from the graph: node construction does
+        # not carry bodies, so this is the only place the prose still exists.
+        source_text = source_documents(
+            pull_requests=pull_requests,
+            issues=issues,
+            commits=commits,
+            reviews=reviews,
         )
     except GitHubError as exc:
         print(f"ingest failed: {exc}", file=sys.stderr)
@@ -133,7 +151,9 @@ def _ingest(args: argparse.Namespace, session: httpx.Client | None) -> int:
     if args.output and not _write_graph(builder, stats, args.output):
         return 1
 
-    if args.store and not _write_store(builder, args.store, embed=args.embed):
+    if args.store and not _write_store(
+        builder, args.store, embed=args.embed, documents=source_text
+    ):
         return 1
 
     _report(args.repository, stats)
@@ -194,7 +214,9 @@ def _write_graph(builder: GraphBuilder, stats, destination: str) -> bool:
     return True
 
 
-def _write_store(builder: GraphBuilder, destination: str, *, embed: bool) -> bool:
+def _write_store(
+    builder: GraphBuilder, destination: str, *, embed: bool, documents=()
+) -> bool:
     """Write the graph to a store. Returns False if it could not be written.
 
     Imported here rather than at module scope on purpose. The store needs a
@@ -226,7 +248,11 @@ def _write_store(builder: GraphBuilder, destination: str, *, embed: bool) -> boo
 
     try:
         written = persist(
-            store, builder, embedder=embedder, extractor=Extractor("none")
+            store,
+            builder,
+            embedder=embedder,
+            extractor=Extractor("none"),
+            documents=documents,
         )
         store.build_vector_index(rebuild=True)
     except Exception as exc:
