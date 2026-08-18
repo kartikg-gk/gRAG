@@ -29,7 +29,8 @@ from __future__ import annotations
 from .fuse import FusedHit, FusedResult, attributes_for, fuse, vector_budget, weights_for
 from .graph_arm import GraphHit, GraphResult, Hop, traverse
 from .intent import Intent, classify, first_marker
-from .recency import age_days, decay_factor, half_life_for
+from .pipeline import RetrievalRun, retrieve
+from .recency import age_and_decay, age_days, decay_factor, half_life_for
 from .seeds import (
     TIER_EXACT,
     TIER_FALLBACK,
@@ -37,6 +38,14 @@ from .seeds import (
     SeedResult,
     exact_seeds,
     select,
+)
+from .trace_log import (
+    ExecutionPath,
+    IntentSection,
+    Metrics,
+    RecencyRecord,
+    SeedRecord,
+    TraceLog,
 )
 from .vector_arm import VectorHit, VectorResult, search
 
@@ -72,4 +81,14 @@ __all__ = [
     "attributes_for",
     "FusedHit",
     "FusedResult",
+    # the sequence, and what it records
+    "retrieve",
+    "RetrievalRun",
+    "TraceLog",
+    "IntentSection",
+    "ExecutionPath",
+    "SeedRecord",
+    "RecencyRecord",
+    "Metrics",
+    "age_and_decay",
 ]

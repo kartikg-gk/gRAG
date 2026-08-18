@@ -86,19 +86,44 @@ def half_life_for(node_type: str | None) -> float:
     return HALF_LIFE_DAYS.get(node_type or "", DEFAULT_HALF_LIFE_DAYS)
 
 
+def age_and_decay(
+    timestamp, node_type: str | None = None, now=None
+) -> tuple[float | None, float]:
+    """``(age_days, decay_factor)`` from one pass.
+
+    Both come back together because both are wanted together and the second is
+    derived from the first. Computing the factor and then asking for the age
+    separately would call ``age_days`` twice per node, and — worse than the
+    cost — the two calls could disagree: a caller that omits ``now`` gets the
+    wall clock, so the age reported alongside a score would be fractionally
+    later than the age that produced it. A reported number that differs from
+    the one used to rank is a reporting bug that looks like a ranking bug.
+
+    ``age`` is ``None`` when the timestamp is unknown, and the factor is then
+    1.0 — unknown means no penalty. The pair therefore distinguishes "no date"
+    from "dated today", which both produce a factor of 1.0 and mean different
+    things.
+    """
+    if not RECENCY_ENABLED:
+        return age_days(timestamp, now), 1.0
+
+    age = age_days(timestamp, now)
+    if age is None:
+        return None, 1.0
+
+    factor = 0.5 ** (age / half_life_for(node_type))
+    return age, max(RECENCY_FLOOR, factor)
+
+
 def decay_factor(timestamp, node_type: str | None = None, now=None) -> float:
     """A multiplier in ``[RECENCY_FLOOR, 1.0]`` for how recent this is.
 
     Returns exactly 1.0 for an unknown timestamp and for a future one, and
     exactly 1.0 for everything when recency is disabled — three separate
     reasons to apply no penalty, deliberately producing the same value.
+
+    Delegates to ``age_and_decay`` so there is one implementation of the curve.
+    A caller wanting the age as well should call that directly rather than
+    calling this and then ``age_days``.
     """
-    if not RECENCY_ENABLED:
-        return 1.0
-
-    age = age_days(timestamp, now)
-    if age is None:
-        return 1.0
-
-    factor = 0.5 ** (age / half_life_for(node_type))
-    return max(RECENCY_FLOOR, factor)
+    return age_and_decay(timestamp, node_type, now)[1]

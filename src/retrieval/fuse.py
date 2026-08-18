@@ -45,7 +45,7 @@ from ..common.config import (
     VECTOR_WEIGHT_CONCEPTUAL,
     VECTOR_WEIGHT_RELATIONAL,
 )
-from .recency import decay_factor
+from .recency import age_and_decay
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,10 @@ class FusedHit:
     graph_score: float
     decay: float
     node_type: str | None = None
+    #: How old the node is, in days, or ``None`` when it carries no timestamp.
+    #: Kept beside the factor it produced so a reader can tell "no date" from
+    #: "dated today" — both give a factor of 1.0 and mean different things.
+    age_days: float | None = None
 
     @property
     def found_by_both(self) -> bool:
@@ -163,7 +167,12 @@ def fuse(
         vector_score = vector_scores.get(node_id, 0.0)
         graph_score = graph_scores.get(node_id, 0.0)
         attribute = attributes.get(node_id, {})
-        decay = decay_factor(attribute.get("timestamp"), attribute.get("type"), now)
+        # One call for both. Asking for the factor and then the age separately
+        # would compute the age twice, and the second could differ from the
+        # first if ``now`` were left to the wall clock.
+        age, decay = age_and_decay(
+            attribute.get("timestamp"), attribute.get("type"), now
+        )
 
         result.hits.append(
             FusedHit(
@@ -173,6 +182,7 @@ def fuse(
                 graph_score=graph_score,
                 decay=decay,
                 node_type=attribute.get("type"),
+                age_days=age,
             )
         )
 
