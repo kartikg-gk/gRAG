@@ -299,3 +299,130 @@ MAX_DEGREE = _env_int("GRAPHRAG_MAX_DEGREE", 10)
 #: in their result counts impossible to attribute.
 TOP_K_VECTOR = _env_int("GRAPHRAG_TOP_K_VECTOR", 10)
 TOP_K_GRAPH = _env_int("GRAPHRAG_TOP_K_GRAPH", 10)
+
+
+# --------------------------------------------------------------------------
+# Intent
+#
+# A query either traces links between things or describes a concept, and the
+# two want different evidence. Classification is two-stage and cheap first:
+# a marker match costs a substring scan, and only a query matching nothing
+# pays for a model call.
+#
+# The marker lists are deliberately small. A long list drifts into encoding
+# one corpus's phrasing, and every word added removes a query from the stage
+# that could have judged it properly. If most queries reach stage two the
+# lists are too narrow; if none do, they are too broad and are classifying by
+# accident.
+# --------------------------------------------------------------------------
+
+#: Phrasings that trace a sequence of events, people or links. Matched as
+#: substrings against the lowercased query, so "who" also catches "whose".
+RELATIONAL_MARKERS = (
+    "who",
+    "whom",
+    "whose",
+    "which",
+    "what caused",
+    "what closed",
+    "what fixed",
+    "what broke",
+    "related to",
+    "connected to",
+    "depends on",
+    "blocked by",
+    "reviewed",
+    "authored",
+    "owner of",
+    "linked to",
+)
+
+#: Phrasings that ask about meaning rather than connection.
+SEMANTIC_MARKERS = (
+    "explain",
+    "architecture",
+    "overview",
+    "summary",
+    "summarise",
+    "summarize",
+    "describe",
+    "how does",
+    "why does",
+    "what is",
+    "purpose of",
+    "rationale",
+)
+
+INTENT_RELATIONAL = "relational"
+INTENT_CONCEPTUAL = "conceptual"
+
+#: How a query was classified. Recorded so a run can report the stage-two rate
+#: rather than leaving it to be inferred from timing.
+STAGE_MARKER = "marker"
+STAGE_MODEL = "model"
+STAGE_FALLBACK = "fallback"
+
+# --------------------------------------------------------------------------
+# Fusion weights
+#
+# **Starting values, not measured.** These are chosen so the two arms can be
+# combined at all; what blend performs best has not been measured. The
+# per-query comparison of fused ranking against each arm's raw ranking is
+# what would justify or move them.
+#
+# The shape is the part with a reason behind it: a query naming a thing wants
+# the arm that follows links from it, and a query describing a concept wants
+# the arm that matches meaning. Measured on two cases built to separate the
+# arms, a named entity scored 0.92 through traversal and 0.0107 by similarity,
+# and a described concept scored 0.7231 by similarity with traversal returning
+# nothing at all. The weights lean the way those numbers do.
+# --------------------------------------------------------------------------
+
+VECTOR_WEIGHT_RELATIONAL = _env_float("GRAPHRAG_VECTOR_WEIGHT_RELATIONAL", 0.15)
+GRAPH_WEIGHT_RELATIONAL = _env_float("GRAPHRAG_GRAPH_WEIGHT_RELATIONAL", 0.85)
+VECTOR_WEIGHT_CONCEPTUAL = _env_float("GRAPHRAG_VECTOR_WEIGHT_CONCEPTUAL", 0.80)
+GRAPH_WEIGHT_CONCEPTUAL = _env_float("GRAPHRAG_GRAPH_WEIGHT_CONCEPTUAL", 0.20)
+
+# --------------------------------------------------------------------------
+# Recency
+#
+# Half-lives are per node type, and the spread is the intent: a ticket is
+# stale in three weeks because an open ticket is about the present and a
+# closed one stops being asked about; a person stays relevant for six months
+# because who works on what changes slowly; a repository effectively never
+# decays because it is the container rather than an event.
+#
+# The floor stops an old fact vanishing. A five-year-old commit that is the
+# only thing touching a file is still the answer, and a decay that reached
+# zero would rank it below anything recent and irrelevant.
+# --------------------------------------------------------------------------
+
+SECONDS_PER_DAY = 86400.0
+
+RECENCY_ENABLED = _env_int("GRAPHRAG_RECENCY_ENABLED", 1) == 1
+
+#: Lowest a decay factor may fall, however old the thing is.
+RECENCY_FLOOR = _env_float("GRAPHRAG_RECENCY_FLOOR", 0.35)
+
+#: Days after which a node of this type is worth half as much.
+HALF_LIFE_DAYS = {
+    NODE_TICKET: 21.0,
+    NODE_COMMIT: 45.0,
+    NODE_PR: 60.0,
+    NODE_FILE: 120.0,
+    NODE_PERSON: 180.0,
+    ENTITY_SERVICE: 365.0,
+    NODE_REPO: 365.0,
+}
+
+#: For a type with no entry. Between a pull request and a file, so an unknown
+#: type is neither treated as breaking news nor as permanent.
+DEFAULT_HALF_LIFE_DAYS = _env_float("GRAPHRAG_DEFAULT_HALF_LIFE_DAYS", 90.0)
+
+#: Fewest vector results a fused set may carry, however many the graph arm
+#: returned. A query whose traversal reaches everything must still carry some
+#: evidence of what the text actually says.
+MIN_VECTOR_K = _env_int("GRAPHRAG_MIN_VECTOR_K", 2)
+
+#: How many results a fused set returns.
+TOTAL_K = _env_int("GRAPHRAG_TOTAL_K", 10)
