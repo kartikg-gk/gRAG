@@ -426,3 +426,90 @@ MIN_VECTOR_K = _env_int("GRAPHRAG_MIN_VECTOR_K", 2)
 
 #: How many results a fused set returns.
 TOTAL_K = _env_int("GRAPHRAG_TOTAL_K", 10)
+
+
+# --------------------------------------------------------------------------
+# Model judges
+#
+# Two closed questions get asked of a model, and they are asked under
+# different constraints, so they get two endpoints rather than one shared
+# client.
+#
+# The ingest question — do these two surface forms name the same entity — runs
+# off the clock, once per grey-band pair, and its answer is permanent: a wrong
+# merge pools two entities' evidence and no later pass can separate them. No
+# timeout, no token cap.
+#
+# The query question — does this query trace links or describe a concept —
+# runs inside the user's latency budget, once per query, in front of a
+# fallback that costs nothing. Hard timeout, tight token cap.
+#
+# **The asymmetry is those two bounds and nothing else.** Nothing here
+# requires the two models to differ, and nothing should: one endpoint with one
+# model configured twice is a legitimate setup. What keeps the query path
+# inside its budget is the timeout, not which model is named.
+#
+# Neither base URL and neither model name has a default. A key with no default
+# already fails hard; a model with a default would silently ship one
+# particular choice to anyone who set only a key, which is the thing these
+# names being role-based exists to prevent. The cost is that there is no
+# zero-config path — an unset value fails when a judge is constructed, not at
+# its first call — and that is accepted.
+# --------------------------------------------------------------------------
+
+
+def _env_str(name: str, default: str = "") -> str:
+    """A string from the environment, or the default.
+
+    Blank counts as unset, so an exported-but-empty variable behaves the same
+    as one that was never exported. The alternative is a base URL of "" that
+    fails somewhere far from the shell that caused it.
+    """
+    import os
+
+    return os.environ.get(name, "").strip() or default
+
+
+#: Where the ingest question is asked. **No default** — see the note above.
+JUDGE_BASE_URL = _env_str("GRAPHRAG_JUDGE_BASE_URL")
+
+#: Which model answers it. **No default**, same reason.
+JUDGE_MODEL = _env_str("GRAPHRAG_JUDGE_MODEL")
+
+#: Where the query question is asked, when its own key is set. **No default.**
+JUDGE_FAST_BASE_URL = _env_str("GRAPHRAG_JUDGE_FAST_BASE_URL")
+
+#: Which model answers it. **No default.**
+JUDGE_FAST_MODEL = _env_str("GRAPHRAG_JUDGE_FAST_MODEL")
+
+#: Which variables hold the two keys. **The names live here; the values never
+#: do.** A key read at call time from a variable named here cannot end up in a
+#: source file, a traceback, or a diff.
+JUDGE_KEY_VAR = "GRAPHRAG_JUDGE_KEY"
+JUDGE_FAST_KEY_VAR = "GRAPHRAG_JUDGE_FAST_KEY"
+
+#: Seconds the query question may take before it is abandoned.
+#:
+#: **Chosen, not measured.** It is a latency budget rather than an observation:
+#: classification sits in front of retrieval, and the fallback it takes on a
+#: timeout is the answer an unmatched query gets anyway. Measuring an
+#: endpoint's real latency would say what the call costs, not what it is worth.
+#:
+#: This is the bound that makes the query path safe, and it applies whichever
+#: endpoint answers — including when the fast key is unset and the ingest
+#: endpoint takes the question instead.
+JUDGE_TIMEOUT_SECONDS = _env_float("GRAPHRAG_JUDGE_TIMEOUT_SECONDS", 2.0)
+
+#: Tokens the query question may spend. **Chosen**: the answer is one word, and
+#: a cap this tight means a model that starts explaining itself is cut off
+#: rather than paid for. The reply is read by prefix, so a truncated word still
+#: parses.
+JUDGE_MAX_TOKENS = _env_int("GRAPHRAG_JUDGE_MAX_TOKENS", 4)
+
+#: Which endpoint answered the query question. Recorded rather than inferred,
+#: for the same reason the classification stage is: a run where the fast
+#: endpoint was never configured and one where it answered every query produce
+#: the same weights and mean different things, and timing them is not a way to
+#: tell.
+ENDPOINT_FAST = "fast"
+ENDPOINT_GENERAL = "general"
