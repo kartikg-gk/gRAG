@@ -62,10 +62,23 @@ embeddings = ["sentence-transformers>=5,<6"]
 # Deliberately unpinned.
 graph = ["ladybug"]
 
+# The client for the two closed questions in src/common/judge.py — the
+# ingest-path merge question and the query-path intent question. One library
+# covers both, because both endpoints speak the same chat API and differ only
+# by URL and model.
+#
+# Optional because every consumer already treats an absent judge exactly as it
+# treats a failed call: resolution creates a new entity, classification falls
+# back to conceptual. The import is inside each factory rather than at module
+# scope, so `import src.common.judge` succeeds with this uninstalled and only a
+# call fails — which is what keeps the two runtime dependencies above the whole
+# list. See test_the_module_imports_with_the_client_library_absent.
+judge = ["openai>=3.3,<4"]
+
 
 dev = [
     "pytest>=9,<10",
-    "graphrag[adapter,examples,embeddings,graph]",
+    "graphrag[adapter,examples,embeddings,graph,judge]",
 ]
 
 [project.scripts]
