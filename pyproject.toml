@@ -75,10 +75,24 @@ graph = ["ladybug"]
 # list. See test_the_module_imports_with_the_client_library_absent.
 judge = ["openai>=3.3,<4"]
 
+# The HTTP surface (src/api/) and the two checks in front of it. Optional
+# because nothing else in the project imports src.api: the library is usable
+# as a library, and only serving it over HTTP needs a web framework.
+#
+# PyJWT carries the `crypto` extra because RS256 verification needs a real
+# asymmetric implementation. That extra is not decoration — without it the
+# only algorithms available are the HMAC family, which is precisely the set
+# this code refuses to accept.
+api = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.32,<1",
+    "pyjwt[crypto]>=2.9,<3",
+]
+
 
 dev = [
     "pytest>=9,<10",
-    "graphrag[adapter,examples,embeddings,graph,judge]",
+    "graphrag[adapter,examples,embeddings,graph,judge,api]",
 ]
 
 [project.scripts]
@@ -100,6 +114,7 @@ graphrag-view = "graphrag.tracing.viewer:main"
 package-dir = { "graphrag" = "src" }
 packages = [
     "graphrag",
+    "graphrag.api",
     "graphrag.common",
     "graphrag.ingestion",
     "graphrag.knowledge",

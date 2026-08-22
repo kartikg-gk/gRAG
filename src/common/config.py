@@ -513,3 +513,83 @@ JUDGE_MAX_TOKENS = _env_int("GRAPHRAG_JUDGE_MAX_TOKENS", 4)
 #: tell.
 ENDPOINT_FAST = "fast"
 ENDPOINT_GENERAL = "general"
+
+
+# --------------------------------------------------------------------------
+# HTTP API: identity and tenancy
+#
+# Two separate checks, deliberately not one. A session token says *who is
+# asking*; an API key says *whose data is being asked about*. Conflating them
+# is how a valid user reads another organisation's graph, so they are resolved
+# by different dependencies, from different credentials, against different
+# stores, and neither can stand in for the other.
+#
+# Both default to enabled. An installation that wants the checks off has to say
+# so, because the failure mode of the opposite default is a deployment that
+# looks authenticated and is not.
+# --------------------------------------------------------------------------
+
+#: Whether session tokens are verified. **Off is a development mode**, and the
+#: dependency logs a warning on every request it lets through unverified, so a
+#: process running this way cannot be mistaken for one that is not.
+CLERK_ENABLED = _env_int("GRAPHRAG_CLERK_ENABLED", 1) == 1
+
+#: Who must have issued the token. **No default**, for the same reason the
+#: judge models have none: a default issuer is a trust decision nobody made.
+#: With verification on and this unset, the dependency refuses to build.
+CLERK_ISSUER = _env_str("GRAPHRAG_CLERK_ISSUER")
+
+#: Where the issuer publishes its public signing keys. **No default.**
+CLERK_JWKS_URL = _env_str("GRAPHRAG_CLERK_JWKS_URL")
+
+#: Which authorized parties may present a token, as a comma-separated list.
+#: Empty means the ``azp`` claim is not checked — an allow-list of nothing
+#: would reject every token, which is not the same as not caring.
+CLERK_AUTHORIZED_PARTIES = tuple(
+    part.strip()
+    for part in _env_str("GRAPHRAG_CLERK_AUTHORIZED_PARTIES").split(",")
+    if part.strip()
+)
+
+#: Seconds of clock skew tolerated on ``exp`` and ``iat``.
+#:
+#: **Chosen, not measured.** Server clocks drift by seconds, and a token
+#: rejected because two machines disagree by one second is an outage rather
+#: than a security event. Small enough that an expired token stays expired.
+CLERK_LEEWAY_SECONDS = _env_float("GRAPHRAG_CLERK_LEEWAY_SECONDS", 30.0)
+
+#: Seconds a fetched signing key stays cached.
+#:
+#: **Chosen.** Long enough that key fetches are rare, short enough that a
+#: rotation is picked up without a restart. Rotation does not wait for this:
+#: an unknown ``kid`` triggers a fetch immediately, so this only bounds how
+#: long a *withdrawn* key stays usable.
+JWKS_CACHE_SECONDS = _env_float("GRAPHRAG_JWKS_CACHE_SECONDS", 300.0)
+
+#: The only signature algorithm accepted. **Deliberately not configurable.**
+#: Reading the algorithm from anywhere the request can influence is the
+#: algorithm-confusion attack; reading it from the environment is the same
+#: mistake one step removed, since it lets a misconfiguration accept ``none``
+#: or an HMAC algorithm keyed on the public key.
+CLERK_ALGORITHM = "RS256"
+
+#: The user id requests run as when verification is off. The value says what
+#: it is, so it is recognisable anywhere it surfaces — a log line, a stored
+#: record, a bug report — as an unauthenticated request rather than a person.
+DEV_USER_ID = _env_str("GRAPHRAG_DEV_USER_ID", "dev-user-AUTHENTICATION-DISABLED")
+
+#: Whether the tenant is resolved from an API key. Off means one tenant and no
+#: key required, which is the single-user development case.
+MULTI_TENANCY_ENABLED = _env_int("GRAPHRAG_MULTI_TENANCY_ENABLED", 1) == 1
+
+#: The organisation every request belongs to when tenancy is off. Named the
+#: same way as the development user, and for the same reason.
+DEFAULT_TENANT_ORG_ID = _env_str(
+    "GRAPHRAG_DEFAULT_TENANT_ORG_ID", "dev-org-SINGLE-TENANT"
+)
+
+#: Where the control plane lives. Separate from the graph store on purpose:
+#: the graph holds one organisation's data, and the control plane holds the
+#: mapping from credential to organisation. One database holding both is a
+#: single query away from a cross-tenant read.
+CONTROL_PLANE_PATH = _env_str("GRAPHRAG_CONTROL_PLANE_PATH", "control-plane.db")
