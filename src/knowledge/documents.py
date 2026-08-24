@@ -1,4 +1,4 @@
-"""Source text, kept whole, separately from the nodes built out of it.
+"""Source text, split into chunks, separately from the nodes built out of it.
 
 A node carries a thing's identity — a pull request's title, a commit's SHA and
 message. A document carries the prose that thing arrived with. They are
@@ -41,13 +41,46 @@ document, so "where did this entity come from" has one answer shape rather
 than one per payload type.
 
 Empty and absent bodies produce no document. A row whose content is ``None``
-or whitespace would carry a path, occupy space, and never yield a mention.
+or whitespace would carry a path, occupy space, and never yield a mention. The
+same rule applies per chunk, not only per field.
+
+One record per chunk, not per body
+----------------------------------
+
+A long body becomes several records; a short one stays a single record. The
+unit is forced by how coverage is scored, not chosen for storage reasons:
+coverage divides by the item's own token count, so an answer of ``N`` tokens
+caps every score at ``N / |I|`` and an item longer than ``5N`` cannot clear a
+0.2 threshold however relevant it is. Whole bodies run past that bound — the
+largest sampled is 4,371 words — and the fix has to be a smaller unit, since a
+threshold loose enough to admit a whole body admits everything.
+
+The size and overlap live in ``common.config`` with the measurement behind
+them. The splitting itself is ``chunking.windows``, the extractor's, called
+with different parameters rather than reimplemented.
+
+Ids carry the chunk index
+-------------------------
+
+``doc:pr:101`` becomes ``doc:pr:101:0``, ``doc:pr:101:1``. The original id is
+still the prefix, so a record's origin is readable from its id alone, and the
+index comes from the chunk's position in the text rather than from iteration
+order, so re-ingesting the same body produces the same ids.
+
+Every record carries the suffix, including a body that produced only one
+chunk. Two id shapes would mean every consumer has to handle both; one shape
+means none do. The cost is that ids written before chunking do not match the
+ones written after, so a store built earlier needs re-ingesting rather than
+merging cleanly.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import Iterable, Iterator, Mapping
+
+from ..analysis.chunking import windows
+from ..common.config import DOCUMENT_CHUNK_OVERLAP_WORDS, DOCUMENT_CHUNK_WORDS
 
 
 @dataclass(frozen=True)
@@ -81,6 +114,46 @@ def _usable(text: str | None) -> bool:
     return bool(text and text.strip())
 
 
+def _chunks(
+    base_id: str, path: str, content: str, origin: str, field: str
+) -> Iterator[SourceDocument]:
+    """One record per chunk of ``content``, in reading order.
+
+    **The windowing is the extractor's, not a second implementation.**
+    ``chunking.windows`` already cuts on word boundaries and already carries
+    absolute offsets, and the only thing that differs here is the parameters —
+    which is what makes it one implementation with two callers rather than two
+    that can drift apart. The sizes differ because the questions differ: the
+    extractor's window is bounded by what a statistical model will accept, and
+    this one by the coverage ceiling.
+
+    Cutting on a word boundary is what protects an identifier. ``#412`` and
+    ``payment_service`` are single words to the splitter, so no boundary can
+    fall inside one; an entity spanning *several* words is what the overlap is
+    for.
+
+    ``_usable`` is applied per chunk rather than only per field. A body whose
+    tail is a signature line or a horizontal rule would otherwise store a row
+    that carries a path, occupies space, and can never yield a mention.
+    """
+    for index, window in enumerate(
+        windows(
+            content,
+            size=DOCUMENT_CHUNK_WORDS,
+            overlap=DOCUMENT_CHUNK_OVERLAP_WORDS,
+        )
+    ):
+        if not _usable(window.text):
+            continue
+        yield SourceDocument(
+            id=f"{base_id}:{index}",
+            path=path,
+            content=window.text,
+            origin=origin,
+            field=field,
+        )
+
+
 def source_documents(
     *,
     pull_requests: Iterable = (),
@@ -98,53 +171,53 @@ def source_documents(
 
     for pull_request in pull_requests:
         if _usable(pull_request.body):
-            documents.append(
-                SourceDocument(
-                    id=f"doc:pr:{pull_request.number}",
-                    path=pull_request.html_url,
-                    content=pull_request.body,
-                    origin=f"pr:{pull_request.number}",
-                    field=FIELD_PULL_REQUEST_BODY,
+            documents.extend(
+                _chunks(
+                    f"doc:pr:{pull_request.number}",
+                    pull_request.html_url,
+                    pull_request.body,
+                    f"pr:{pull_request.number}",
+                    FIELD_PULL_REQUEST_BODY,
                 )
             )
 
     for issue in issues:
         if _usable(issue.body):
-            documents.append(
-                SourceDocument(
-                    id=f"doc:ticket:{issue.number}",
-                    path=issue.html_url,
-                    content=issue.body,
-                    origin=f"ticket:{issue.number}",
-                    field=FIELD_ISSUE_BODY,
+            documents.extend(
+                _chunks(
+                    f"doc:ticket:{issue.number}",
+                    issue.html_url,
+                    issue.body,
+                    f"ticket:{issue.number}",
+                    FIELD_ISSUE_BODY,
                 )
             )
 
     for commit in commits:
         if _usable(commit.commit.message):
-            documents.append(
-                SourceDocument(
-                    id=f"doc:commit:{commit.sha}",
-                    path=commit.html_url,
-                    content=commit.commit.message,
-                    origin=f"commit:{commit.sha}",
-                    field=FIELD_COMMIT_MESSAGE,
+            documents.extend(
+                _chunks(
+                    f"doc:commit:{commit.sha}",
+                    commit.html_url,
+                    commit.commit.message,
+                    f"commit:{commit.sha}",
+                    FIELD_COMMIT_MESSAGE,
                 )
             )
 
     for number, submitted in (reviews or {}).items():
         for review in submitted:
             if _usable(review.body):
-                documents.append(
-                    SourceDocument(
-                        # Keyed on the review's own id, not the pull request's:
-                        # one pull request carries many reviews and they would
-                        # otherwise overwrite each other.
-                        id=f"doc:review:{review.id}",
-                        path=review.html_url,
-                        content=review.body,
-                        origin=f"pr:{number}",
-                        field=FIELD_REVIEW_BODY,
+                documents.extend(
+                    # Keyed on the review's own id, not the pull request's:
+                    # one pull request carries many reviews and they would
+                    # otherwise overwrite each other.
+                    _chunks(
+                        f"doc:review:{review.id}",
+                        review.html_url,
+                        review.body,
+                        f"pr:{number}",
+                        FIELD_REVIEW_BODY,
                     )
                 )
 
