@@ -551,13 +551,6 @@ CLERK_AUTHORIZED_PARTIES = tuple(
     if part.strip()
 )
 
-#: Seconds of clock skew tolerated on ``exp`` and ``iat``.
-#:
-#: **Chosen, not measured.** Server clocks drift by seconds, and a token
-#: rejected because two machines disagree by one second is an outage rather
-#: than a security event. Small enough that an expired token stays expired.
-CLERK_LEEWAY_SECONDS = _env_float("GRAPHRAG_CLERK_LEEWAY_SECONDS", 30.0)
-
 #: Seconds a fetched signing key stays cached.
 #:
 #: **Chosen.** Long enough that key fetches are rare, short enough that a
@@ -661,3 +654,30 @@ DOCUMENT_CHUNK_WORDS = 80
 #: without measuring them, and costing 19% duplicated text. A measurement of
 #: real span lengths would justify moving it.
 DOCUMENT_CHUNK_OVERLAP_WORDS = 15
+
+
+# --------------------------------------------------------------------------
+# The served store
+#
+# The HTTP surface opens one store for the life of the process. Which store
+# is a deployment decision, so it is read from the environment like every
+# other value here rather than passed on a command line the server does not
+# have.
+# --------------------------------------------------------------------------
+
+#: Where the served graph lives. The same default the CLI writes to, so a
+#: store built by an ingest is the one a server started in the same directory
+#: will open.
+STORE_PATH = _env_str("GRAPHRAG_STORE_PATH", "graph.db")
+
+#: Whether to embed a throwaway string at startup.
+#:
+#: **Measured.** The embedding model's cold start is roughly fifteen seconds,
+#: and it is paid on the first call that needs a vector. Left to itself that
+#: is the first user query, which turns a slow start into a slow product. One
+#: embed at boot moves the cost to where nobody is waiting on it.
+#:
+#: Off is for tests and for any process that will never embed, where fifteen
+#: seconds of model loading buys nothing.
+WARM_EMBEDDER_ON_STARTUP = _env_int("GRAPHRAG_WARM_EMBEDDER", 1) == 1
+
