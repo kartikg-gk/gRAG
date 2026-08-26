@@ -513,3 +513,171 @@ JUDGE_MAX_TOKENS = _env_int("GRAPHRAG_JUDGE_MAX_TOKENS", 4)
 #: tell.
 ENDPOINT_FAST = "fast"
 ENDPOINT_GENERAL = "general"
+
+
+# --------------------------------------------------------------------------
+# HTTP API: identity and tenancy
+#
+# Two separate checks, deliberately not one. A session token says *who is
+# asking*; an API key says *whose data is being asked about*. Conflating them
+# is how a valid user reads another organisation's graph, so they are resolved
+# by different dependencies, from different credentials, against different
+# stores, and neither can stand in for the other.
+#
+# Both default to enabled. An installation that wants the checks off has to say
+# so, because the failure mode of the opposite default is a deployment that
+# looks authenticated and is not.
+# --------------------------------------------------------------------------
+
+#: Whether session tokens are verified. **Off is a development mode**, and the
+#: dependency logs a warning on every request it lets through unverified, so a
+#: process running this way cannot be mistaken for one that is not.
+CLERK_ENABLED = _env_int("GRAPHRAG_CLERK_ENABLED", 1) == 1
+
+#: Who must have issued the token. **No default**, for the same reason the
+#: judge models have none: a default issuer is a trust decision nobody made.
+#: With verification on and this unset, the dependency refuses to build.
+CLERK_ISSUER = _env_str("GRAPHRAG_CLERK_ISSUER")
+
+#: Where the issuer publishes its public signing keys. **No default.**
+CLERK_JWKS_URL = _env_str("GRAPHRAG_CLERK_JWKS_URL")
+
+#: Which authorized parties may present a token, as a comma-separated list.
+#: Empty means the ``azp`` claim is not checked — an allow-list of nothing
+#: would reject every token, which is not the same as not caring.
+CLERK_AUTHORIZED_PARTIES = tuple(
+    part.strip()
+    for part in _env_str("GRAPHRAG_CLERK_AUTHORIZED_PARTIES").split(",")
+    if part.strip()
+)
+
+#: Seconds a fetched signing key stays cached.
+#:
+#: **Chosen.** Long enough that key fetches are rare, short enough that a
+#: rotation is picked up without a restart. Rotation does not wait for this:
+#: an unknown ``kid`` triggers a fetch immediately, so this only bounds how
+#: long a *withdrawn* key stays usable.
+JWKS_CACHE_SECONDS = _env_float("GRAPHRAG_JWKS_CACHE_SECONDS", 300.0)
+
+#: The only signature algorithm accepted. **Deliberately not configurable.**
+#: Reading the algorithm from anywhere the request can influence is the
+#: algorithm-confusion attack; reading it from the environment is the same
+#: mistake one step removed, since it lets a misconfiguration accept ``none``
+#: or an HMAC algorithm keyed on the public key.
+CLERK_ALGORITHM = "RS256"
+
+#: The user id requests run as when verification is off. The value says what
+#: it is, so it is recognisable anywhere it surfaces — a log line, a stored
+#: record, a bug report — as an unauthenticated request rather than a person.
+DEV_USER_ID = _env_str("GRAPHRAG_DEV_USER_ID", "dev-user-AUTHENTICATION-DISABLED")
+
+#: Whether the tenant is resolved from an API key. Off means one tenant and no
+#: key required, which is the single-user development case.
+MULTI_TENANCY_ENABLED = _env_int("GRAPHRAG_MULTI_TENANCY_ENABLED", 1) == 1
+
+#: The organisation every request belongs to when tenancy is off. Named the
+#: same way as the development user, and for the same reason.
+DEFAULT_TENANT_ORG_ID = _env_str(
+    "GRAPHRAG_DEFAULT_TENANT_ORG_ID", "dev-org-SINGLE-TENANT"
+)
+
+#: Where the control plane lives. Separate from the graph store on purpose:
+#: the graph holds one organisation's data, and the control plane holds the
+#: mapping from credential to organisation. One database holding both is a
+#: single query away from a cross-tenant read.
+CONTROL_PLANE_PATH = _env_str("GRAPHRAG_CONTROL_PLANE_PATH", "control-plane.db")
+
+
+# --------------------------------------------------------------------------
+# Document chunking
+#
+# A stored document is one chunk, not one body. The unit matters because
+# coverage divides by the item's token count: an answer of N tokens caps every
+# score at N/|I|, so clearing threshold t needs |I| <= N/t — at 0.2, |I| <= 5N.
+# An item past that length is unreachable however relevant it is, and the
+# response has to be a smaller unit rather than a looser threshold, because a
+# threshold loose enough to admit a whole body admits everything.
+#
+# Measured on 600 documents drawn from three public repositories, in the four
+# fields this project stores — pull request bodies, issue bodies, review
+# bodies, commit messages:
+#
+#     pull request bodies   median 112 words, p90 300, max 4371
+#     issue bodies          median 127 words, p90 317, max  614
+#     commit messages       median   7 words, p90  34, max  271
+#     all four              median  25 words, p90 210, p95 300
+#
+# Two things follow. Most documents are short — a 120-word window leaves 77%
+# of them as a single chunk, and the median pull request body untouched — so
+# chunking costs nothing on the common case and only splits the tail. And the
+# tail is long enough to matter: the largest body sampled is 4,371 words.
+#
+# The ceiling is in scoring tokens, not words, and the two differ. Measured
+# over 100 real bodies, tokenisation yields **0.523 tokens per word** after
+# stopwords and the minimum length are applied. So:
+#
+#     window   resulting |I|          smallest answer that can clear 0.2
+#     words    median / p90 tokens    median / p90
+#      60        31 /  42                6.2 / 8.4
+#     120        62 /  84               12.4 / 16.8
+#     200       104 / 140               20.8 / 28.0
+#
+# **The size is set by the worst case, not the median.** 0.523 is prose. Text
+# that is mostly identifiers, code, or long unrepeated words tokenises at up
+# to 1.0 tokens per word, because nothing is a stopword and nothing falls
+# under the minimum length — and a pull request body full of stack traces is
+# exactly that. Sizing on the median would put those chunks over the ceiling
+# while the average one looked fine, which is the failure that is invisible
+# in an average.
+#
+# So the bound is taken at a ratio of 1.0: the shortest answer in the stored
+# traces is 17 tokens, giving |I| <= 85, and a window of 80 words cannot
+# exceed 80 tokens however dense its text. On real prose the same window lands
+# at a median of 42 tokens and a p90 of 56, comfortably inside.
+#
+# What that costs: 67% of documents stay a single chunk instead of the 77% a
+# 120-word window would leave, so more bodies split. That is the price of the
+# bound holding for every input rather than for the typical one.
+# --------------------------------------------------------------------------
+
+#: Words per stored chunk. Sized so that even text tokenising at 1.0 tokens
+#: per word stays under the coverage ceiling for a 17-token answer — the
+#: shortest answer in the stored traces — which puts the limit at 85 tokens.
+DOCUMENT_CHUNK_WORDS = 80
+
+#: Words carried into the next chunk, so an entity spanning a boundary is
+#: still whole in one of them.
+#:
+#: **Chosen, not measured.** The longest entity any rule can match is three
+#: words — ``pull request #1347`` — so three is the measured floor. Fifteen is
+#: five times that, leaving room for the statistical stage's multi-word spans
+#: without measuring them, and costing 19% duplicated text. A measurement of
+#: real span lengths would justify moving it.
+DOCUMENT_CHUNK_OVERLAP_WORDS = 15
+
+
+# --------------------------------------------------------------------------
+# The served store
+#
+# The HTTP surface opens one store for the life of the process. Which store
+# is a deployment decision, so it is read from the environment like every
+# other value here rather than passed on a command line the server does not
+# have.
+# --------------------------------------------------------------------------
+
+#: Where the served graph lives. The same default the CLI writes to, so a
+#: store built by an ingest is the one a server started in the same directory
+#: will open.
+STORE_PATH = _env_str("GRAPHRAG_STORE_PATH", "graph.db")
+
+#: Whether to embed a throwaway string at startup.
+#:
+#: **Measured.** The embedding model's cold start is roughly fifteen seconds,
+#: and it is paid on the first call that needs a vector. Left to itself that
+#: is the first user query, which turns a slow start into a slow product. One
+#: embed at boot moves the cost to where nobody is waiting on it.
+#:
+#: Off is for tests and for any process that will never embed, where fifteen
+#: seconds of model loading buys nothing.
+WARM_EMBEDDER_ON_STARTUP = _env_int("GRAPHRAG_WARM_EMBEDDER", 1) == 1
+
