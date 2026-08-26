@@ -54,7 +54,6 @@ from ..common.config import (
     CLERK_ENABLED,
     CLERK_ISSUER,
     CLERK_JWKS_URL,
-    CLERK_LEEWAY_SECONDS,
     CONTROL_PLANE_PATH,
     DEFAULT_TENANT_ORG_ID,
     DEV_USER_ID,
@@ -74,6 +73,21 @@ logger = logging.getLogger("graphrag.api.auth")
 #: return a more helpful one.
 INVALID_CREDENTIALS = "invalid authentication credentials"
 
+#: Seconds of clock skew tolerated on ``exp`` and ``iat``.
+#:
+#: **Fixed in code, deliberately not configurable.** Leeway is how long an
+#: expired token keeps working, so it is a security property rather than a
+#: deployment preference — and a value read from the environment is a value
+#: that can be widened by whoever sets the environment, without the change
+#: appearing in any diff. Five seconds covers ordinary clock drift between two
+#: machines and is short enough that an expired token stays expired.
+LEEWAY_SECONDS = 5
+
+#: Whether the fail-open warning has already been emitted in this process.
+#: The warning has to be impossible to miss and impossible to drown in, and
+#: those pull opposite ways at one line per request.
+_unconfigured_warning_emitted = False
+
 API_KEY_HEADER = "X-API-Key"
 
 _jwks_lock = threading.Lock()
@@ -90,6 +104,35 @@ def _unauthorized() -> HTTPException:
         detail=INVALID_CREDENTIALS,
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def _warn_unconfigured_once() -> None:
+    """Say once, loudly, that this process is not verifying anything.
+
+    Once rather than per request. A line on every call is a line that scrolls
+    a busy log until nobody sees it, and the thing being reported is a
+    property of the configuration rather than of any one request — it does not
+    become more true by being repeated.
+
+    Startup is where this lands in practice, because the first request is
+    usually a probe.
+    """
+    global _unconfigured_warning_emitted
+    if _unconfigured_warning_emitted:
+        return
+    _unconfigured_warning_emitted = True
+    logger.warning(
+        "SESSION VERIFICATION IS OFF: no issuer is configured, so every "
+        "request runs as %s and no token is checked. Set %s to verify.",
+        DEV_USER_ID,
+        "GRAPHRAG_CLERK_ISSUER",
+    )
+
+
+def reset_unconfigured_warning() -> None:
+    """Let the warning fire again. For tests, and for a re-read of config."""
+    global _unconfigured_warning_emitted
+    _unconfigured_warning_emitted = False
 
 
 def _report(message: str, exc: BaseException | None = None) -> None:
@@ -227,7 +270,7 @@ def verify_session_token(token: str) -> dict:
             signing_key.key,
             algorithms=[CLERK_ALGORITHM],
             issuer=CLERK_ISSUER,
-            leeway=CLERK_LEEWAY_SECONDS,
+            leeway=LEEWAY_SECONDS,
             options={
                 "require": ["exp", "iat", "sub"],
                 "verify_signature": True,
@@ -279,6 +322,26 @@ async def get_current_user(request: Request) -> str:
             "was checked",
             DEV_USER_ID,
         )
+        request.state.user_id = DEV_USER_ID
+        return DEV_USER_ID
+
+    if not CLERK_ISSUER:
+        # **A deliberate change of posture, not a bug fix.** This used to
+        # refuse to verify against a trust anchor nobody configured, and fail
+        # closed. It now skips verification entirely and runs as the
+        # development user.
+        #
+        # What that buys: a checkout with nothing configured serves requests,
+        # which is the ordinary state of working on this locally.
+        #
+        # What it costs, stated plainly because it is the whole risk: a
+        # deployment that *intends* to verify and has a missing or misspelled
+        # issuer variable will serve every request unauthenticated, and the
+        # only signal is the warning below. Fail-closed made that
+        # misconfiguration loud; this makes it quiet. There is no flag to pick
+        # between the two -- this replaces the old behaviour rather than
+        # joining it.
+        _warn_unconfigured_once()
         request.state.user_id = DEV_USER_ID
         return DEV_USER_ID
 
@@ -384,6 +447,7 @@ __all__ = [
     "get_current_tenant_org",
     "get_current_user",
     "reset_jwks_cache",
+    "reset_unconfigured_warning",
     "resolve_org",
     "set_control_plane",
     "verify_session_token",
