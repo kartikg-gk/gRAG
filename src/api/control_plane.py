@@ -10,6 +10,11 @@ per request on an exact-match index; it needs no server, no driver, and no
 entry in the dependency list. The graph store earns an embedded graph engine
 because it does traversal and vector search — this does neither.
 
+``org_id`` is a plain string with no foreign key, because there is no
+organisation table in this project. That is deliberate and stays that way
+here: introducing one is its own piece of work, and doing it as a side effect
+of adding columns would make a schema change that nothing asked for.
+
 What is stored
 --------------
 
@@ -52,11 +57,27 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_id     TEXT PRIMARY KEY,
     hashed_key TEXT NOT NULL UNIQUE,
     org_id     TEXT NOT NULL,
+    scopes     TEXT NOT NULL DEFAULT 'read',
+    prefix     TEXT,
     created_at INTEGER NOT NULL,
     revoked_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS api_keys_org ON api_keys (org_id);
 """
+
+#: Characters of the raw key kept as a human-readable handle.
+#:
+#: A key is 32 random bytes rendered as roughly 43 URL-safe characters, so
+#: eight leaves about 35 unknown -- far more than enough that the remainder
+#: cannot be searched. It is a label for telling two keys apart in a list, not
+#: a fragment of the secret in any useful sense.
+PREFIX_LENGTH = 8
+
+#: What a key is allowed to do. Every key issued today is full-access, and
+#: nothing reads this yet -- enforcement is separate work. The field is here
+#: because the alternative is discovering at enforcement time that no existing
+#: key records what it was issued for.
+DEFAULT_SCOPES = "read"
 
 
 class ControlPlaneError(RuntimeError):
@@ -91,6 +112,12 @@ class ApiKeyRecord:
     key_id: str
     hashed_key: str
     org_id: str
+    #: What this key may do. Recorded at issuance and not yet enforced
+    #: anywhere -- see ``DEFAULT_SCOPES``.
+    scopes: str = DEFAULT_SCOPES
+    #: The first few characters of the raw key. Safe to store and safe to
+    #: show: it identifies which key this is without being the key.
+    prefix: str | None = None
     created_at: datetime | None = None
     revoked_at: datetime | None = None
 
@@ -138,8 +165,8 @@ class ControlPlane:
         with self._lock:
             try:
                 row = self._connection.execute(
-                    "SELECT key_id, hashed_key, org_id, created_at, revoked_at "
-                    "FROM api_keys WHERE hashed_key = ?",
+                    "SELECT key_id, hashed_key, org_id, scopes, prefix, "
+                    "created_at, revoked_at FROM api_keys WHERE hashed_key = ?",
                     (hashed_key,),
                 ).fetchone()
             except sqlite3.Error as exc:
@@ -149,7 +176,13 @@ class ControlPlane:
 
     # -- writing ------------------------------------------------------------
 
-    def issue(self, org_id: str, *, key_id: str | None = None) -> tuple[str, ApiKeyRecord]:
+    def issue(
+        self,
+        org_id: str,
+        *,
+        key_id: str | None = None,
+        scopes: str = DEFAULT_SCOPES,
+    ) -> tuple[str, ApiKeyRecord]:
         """Mint a key for ``org_id``. Returns ``(raw_key, record)``.
 
         The raw key is returned and not kept. This is the only moment it
@@ -160,13 +193,16 @@ class ControlPlane:
         hashed = hash_api_key(raw)
         identifier = key_id or secrets.token_hex(8)
         created = int(datetime.now(timezone.utc).timestamp())
+        # Stored beside the digest so a list of keys can be told apart. This
+        # is the only part of the raw key that outlives this call.
+        prefix = raw[:PREFIX_LENGTH]
 
         with self._lock:
             try:
                 self._connection.execute(
-                    "INSERT INTO api_keys (key_id, hashed_key, org_id, created_at, "
-                    "revoked_at) VALUES (?, ?, ?, ?, NULL)",
-                    (identifier, hashed, org_id, created),
+                    "INSERT INTO api_keys (key_id, hashed_key, org_id, scopes, "
+                    "prefix, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                    (identifier, hashed, org_id, scopes, prefix, created),
                 )
                 self._connection.commit()
             except sqlite3.Error as exc:
@@ -176,6 +212,8 @@ class ControlPlane:
             key_id=identifier,
             hashed_key=hashed,
             org_id=org_id,
+            scopes=scopes,
+            prefix=prefix,
             created_at=datetime.fromtimestamp(created, timezone.utc),
         )
 
@@ -219,6 +257,8 @@ def _record(row: sqlite3.Row) -> ApiKeyRecord:
         key_id=row["key_id"],
         hashed_key=row["hashed_key"],
         org_id=row["org_id"],
+        scopes=row["scopes"] or DEFAULT_SCOPES,
+        prefix=row["prefix"],
         created_at=_moment(row["created_at"]),
         revoked_at=_moment(row["revoked_at"]),
     )
