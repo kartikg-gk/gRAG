@@ -15,6 +15,8 @@ the one exception, and it is deliberate — see the note beside it.
 
 from __future__ import annotations
 
+import socket
+
 # --------------------------------------------------------------------------
 # Node labels
 # --------------------------------------------------------------------------
@@ -581,11 +583,13 @@ DEFAULT_TENANT_ORG_ID = _env_str(
     "GRAPHRAG_DEFAULT_TENANT_ORG_ID", "dev-org-SINGLE-TENANT"
 )
 
-#: Where the control plane lives. Separate from the graph store on purpose:
-#: the graph holds one organisation's data, and the control plane holds the
-#: mapping from credential to organisation. One database holding both is a
-#: single query away from a cross-tenant read.
-CONTROL_PLANE_PATH = _env_str("GRAPHRAG_CONTROL_PLANE_PATH", "control-plane.db")
+#: Where the control plane lives is **not** here. It is a database URL read at
+#: connection time by ``src.models.database``, from
+#: ``GRAPHRAG_CONTROL_PLANE_DATABASE_URL`` or ``GRAPHRAG_DATABASE_URL``, and it
+#: has no default. Every setting in this module has one, and a default here
+#: would be a local file — which would give each process its own private
+#: control plane and no error, on the one system where several processes are
+#: required to share it.
 
 
 # --------------------------------------------------------------------------
@@ -681,3 +685,71 @@ STORE_PATH = _env_str("GRAPHRAG_STORE_PATH", "graph.db")
 #: seconds of model loading buys nothing.
 WARM_EMBEDDER_ON_STARTUP = _env_int("GRAPHRAG_WARM_EMBEDDER", 1) == 1
 
+
+
+# --------------------------------------------------------------------------
+# Artifact storage
+#
+# A built graph is a file, and moving it between wherever it was built and
+# wherever it is served is a separate concern from either. These say where it
+# goes and which backend puts it there.
+#
+# The default needs nothing set up: files copied under a local directory, no
+# service, no credentials, no optional package installed. That is what
+# development and the test suite use, and it is a real backend rather than a
+# stub — the cloud one is the alternative, not the real one.
+# --------------------------------------------------------------------------
+
+#: Which backend writes new artifacts. ``local`` or ``cloud``.
+#:
+#: Only writes consult this. A read dispatches on the scheme of the URI it was
+#: given, so an artifact written to one backend stays readable after the
+#: default changes to the other.
+ARTIFACT_BACKEND = _env_str("GRAPHRAG_ARTIFACT_BACKEND", "local")
+
+#: Where the local backend keeps things. Created on demand.
+ARTIFACT_ROOT = _env_str("GRAPHRAG_ARTIFACT_ROOT", "artifacts")
+
+#: Bucket for the cloud backend. **No default** — a default bucket name is a
+#: default destination for somebody else's data.
+ARTIFACT_BUCKET = _env_str("GRAPHRAG_ARTIFACT_BUCKET")
+
+#: Region for the cloud backend, when its client needs one. **No default**,
+#: for the same reason.
+ARTIFACT_REGION = _env_str("GRAPHRAG_ARTIFACT_REGION")
+
+#: Where a downloaded artifact lands before it is opened. Separate from the
+#: artifact root because one is storage and the other is a cache: the cache is
+#: keyed by which process holds it and is safe to delete.
+POD_CACHE_ROOT = _env_str("GRAPHRAG_POD_CACHE_ROOT", "cache")
+
+#: Which serving process this is.
+#:
+#: Defaults to the machine's name, which is right for one process per machine
+#: and wrong the moment there are two — the cache is keyed by this, and two
+#: processes sharing an identifier would write each other's files. Set it
+#: explicitly wherever more than one runs.
+POD_ID = _env_str("GRAPHRAG_POD_ID", "") or socket.gethostname()
+
+#: Where other processes would reach this one.
+#:
+#: Recorded rather than used: nothing dials a pod yet. It defaults to the
+#: loopback address because a single-machine deployment has no better answer,
+#: and a wrong-but-honest local address is easier to notice than a blank one.
+POD_ADDRESS = _env_str("GRAPHRAG_POD_ADDRESS", "127.0.0.1")
+
+#: Seconds between one reconcile pass and the next.
+#:
+#: Five is short enough that a tenant whose intent moved is serving the new
+#: graph within a few seconds, and long enough that a caught-up fleet's
+#: repeated single query costs nothing worth measuring.
+RECONCILE_INTERVAL_SECONDS = _env_float("GRAPHRAG_RECONCILE_INTERVAL", 5.0)
+
+#: How long a pod's last heartbeat stays good enough to place work on it.
+#:
+#: Two minutes is many intervals' worth of beats, so a pod has to have missed
+#: a run of them before it stops being a candidate — a single slow tick must
+#: not take capacity out of the fleet. Tunable because the right number is a
+#: property of the deployment's interval and its tolerance for placing a
+#: tenant on something that has just died.
+POD_HEARTBEAT_WINDOW_SECONDS = _env_float("GRAPHRAG_POD_HEARTBEAT_WINDOW", 120.0)

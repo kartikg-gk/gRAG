@@ -18,8 +18,8 @@ code that never sees a request.
 
 **Nothing here is imported by the rest of the project.** The web framework and
 the token library are an optional dependency group, so importing ``src.api``
-is the thing that requires them — which is what keeps the two runtime
-dependencies at two.
+is the thing that requires them — which is what keeps the web framework and
+the token library out of the runtime dependency list.
 """
 
 from .auth import (
@@ -31,7 +31,7 @@ from .auth import (
     set_control_plane,
     verify_session_token,
 )
-from .control_plane import (
+from ..control_plane import (
     ApiKeyRecord,
     ControlPlane,
     ControlPlaneError,

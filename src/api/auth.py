@@ -54,13 +54,17 @@ from ..common.config import (
     CLERK_ENABLED,
     CLERK_ISSUER,
     CLERK_JWKS_URL,
-    CONTROL_PLANE_PATH,
     DEFAULT_TENANT_ORG_ID,
     DEV_USER_ID,
     JWKS_CACHE_SECONDS,
     MULTI_TENANCY_ENABLED,
 )
-from .control_plane import ControlPlaneError, hash_api_key, open_control_plane, verify_key
+from ..control_plane import (
+    ControlPlaneError,
+    hash_api_key,
+    open_control_plane,
+    verify_key,
+)
 from .tenancy import reset_current_org, set_current_org
 
 #: The first logging in this project. Authentication is the one place where
@@ -361,11 +365,18 @@ async def get_current_user(request: Request) -> str:
 
 
 def control_plane():
-    """The process-wide control plane handle, opened on first use."""
+    """The process-wide control plane handle, opened on first use.
+
+    Where it connects comes from the environment and has no default, so a
+    process nobody told about a database raises here rather than quietly
+    opening a private one of its own. That failure is a control-plane error
+    like any other, and ``resolve_org`` already treats those as a rejection
+    the client cannot distinguish from a bad key.
+    """
     global _control_plane
     with _control_plane_lock:
         if _control_plane is None:
-            _control_plane = open_control_plane(CONTROL_PLANE_PATH)
+            _control_plane = open_control_plane()
         return _control_plane
 
 

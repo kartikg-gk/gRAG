@@ -3,6 +3,12 @@
 httpx==0.28.1
 pydantic==2.13.4
 
+# The control plane: its tables are declared as models, and they live in a
+# database several processes on different machines share.
+sqlmodel==0.0.39
+sqlalchemy==2.0.52
+psycopg[binary]==3.3.4
+
 # Adapter: only src/tracing_langgraph.py needs this.
 langchain-core==1.5.3
 

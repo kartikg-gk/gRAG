@@ -25,6 +25,23 @@ entered with a ``with`` around the yield, so a warm-up that raises unwinds
 through it and the handle does not leak into a process that then fails to
 serve.
 
+The pod agent, and why it is off by default
+-------------------------------------------
+
+A process can also run the agent that keeps this machine's loaded graphs in
+agreement with what the control plane says it should hold. It is off unless
+``GRAPHRAG_POD_AGENT`` is exactly ``"1"``.
+
+An exact comparison rather than a truthiness test, because the two mistakes
+are not the same size. A deployment that meant to switch it on and wrote
+``"true"`` gets a process with no agent and a log that says so. A deployment
+that never wanted it, with something unrelated left in that variable, would
+otherwise get a background task polling a database it does not have.
+
+Everything the agent needs is imported **inside** that gate, so a process
+running without it neither pays for those imports nor fails to start because
+something on that path is unavailable.
+
 Failures are statuses, not empty sets
 -------------------------------------
 
@@ -36,6 +53,9 @@ report the first while the second is happening.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -43,6 +63,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from ..common.config import (
     DEFAULT_TENANT_ORG_ID,
+    POD_ID,
     STORE_PATH,
     WARM_EMBEDDER_ON_STARTUP,
 )
@@ -66,10 +87,49 @@ from .models import (
     SwitchResponse,
 )
 
+logger = logging.getLogger("graphrag.api.app")
+
 #: The text embedded at startup to pay the model's cold start. Its content is
 #: irrelevant — only that it is short and that something goes through the
 #: model before a caller does.
 WARMUP_TEXT = "warm"
+
+#: The variable that switches the pod agent on, and the one value that does
+#: it. See the module docstring for why this is compared rather than tested
+#: for truth.
+POD_AGENT_VARIABLE = "GRAPHRAG_POD_AGENT"
+POD_AGENT_ENABLED = "1"
+
+
+def pod_agent_enabled() -> bool:
+    """Whether this process should run the agent.
+
+    Read when the application starts rather than when this module is
+    imported, so what is set at the moment of starting is what decides.
+    """
+    return os.environ.get(POD_AGENT_VARIABLE) == POD_AGENT_ENABLED
+
+
+def _bring_up_the_control_plane() -> None:
+    """Create the control-plane tables, and shrug if there is no database.
+
+    Wrapped, and deliberately not fatal. The serving path does not read these
+    tables: a local run with nothing configured has to come up and answer
+    queries exactly as it did before any of this existed. An unavailable
+    control plane is a line in the log, not a process that will not start.
+    """
+    try:
+        from ..models import create_control_plane_engine, create_control_plane_schema
+
+        engine = create_control_plane_engine()
+        try:
+            create_control_plane_schema(engine)
+        finally:
+            engine.dispose()
+    except Exception:  # noqa: BLE001 - serving does not depend on this
+        logger.warning(
+            "the control plane is unavailable; continuing without it", exc_info=True
+        )
 
 
 def default_engine_factory():
@@ -203,9 +263,61 @@ def create_app(*, engine_factory=None) -> FastAPI:
             app.state.engine = engine
             app.state.registry = registry
             app.state.active_path = Path(engine.path)
+            app.state.pod_agent = None
+            app.state.pod_agent_stop = None
+
+            _bring_up_the_control_plane()
+
+            agent = None
+            stop = None
+            if pod_agent_enabled():
+                # Imported here and nowhere else, so a process running
+                # without the agent never loads any of it.
+                from ..pod import boot, poll
+
+                try:
+                    # Off the event loop: it opens a session and copies
+                    # files, and inline that is time nothing is served.
+                    hydrated = await asyncio.to_thread(boot, registry=registry)
+                    logger.info("hydrated %d tenant(s) at startup", len(hydrated))
+                except Exception:  # noqa: BLE001 - serving beats registering
+                    logger.warning(
+                        "the pod did not boot cleanly; continuing", exc_info=True
+                    )
+
+                stop = asyncio.Event()
+                # Held on the application state rather than left to float: the
+                # shutdown path needs both, and a task nobody references can
+                # be collected while it is still running.
+                agent = asyncio.create_task(poll(registry=registry, stop=stop))
+                app.state.pod_agent = agent
+                app.state.pod_agent_stop = stop
+                logger.info("pod agent running as %s", POD_ID)
+
             try:
                 yield
             finally:
+                # The agent stops **before** the stores close. A tick in
+                # flight is holding handles and may be part way through
+                # swapping one; closing underneath it is a use-after-close,
+                # and the ordering here is the only thing preventing that.
+                #
+                # Awaited rather than cancelled. The loop's wait wakes on the
+                # signal, so this costs nothing when it is idle, and a tick
+                # that is mid-download gets to finish rather than being torn
+                # open and leaving half a file in the cache with a registry
+                # entry pointing at it.
+                if agent is not None:
+                    try:
+                        stop.set()
+                        await agent
+                    except Exception:  # noqa: BLE001 - shutdown continues
+                        logger.warning(
+                            "the pod agent did not stop cleanly", exc_info=True
+                        )
+
+                app.state.pod_agent = None
+                app.state.pod_agent_stop = None
                 app.state.engine = None
                 app.state.registry = None
                 app.state.active_path = None

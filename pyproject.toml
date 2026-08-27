@@ -14,20 +14,42 @@ requires-python = ">=3.12"
 # readme is dropped silently rather than raising.
 readme = "README.md"
 
-# Runtime dependencies. Two, and each earns its place:
+# Runtime dependencies. Five, and each earns its place:
 #
-#   httpx    — src/ingestion/github.py. The GitHub REST client. Chosen over
-#              urllib for connection reuse across the hundreds of per-pull-
-#              request enrichment calls a single ingest makes.
-#   pydantic — src/ingestion/models.py. Validates GitHub's payloads at the
-#              boundary, so a shape change surfaces at parse time rather than
-#              as an AttributeError three modules later.
+#   httpx      — src/ingestion/github.py. The GitHub REST client. Chosen over
+#                urllib for connection reuse across the hundreds of per-pull-
+#                request enrichment calls a single ingest makes.
+#   pydantic   — src/ingestion/models.py. Validates GitHub's payloads at the
+#                boundary, so a shape change surfaces at parse time rather
+#                than as an AttributeError three modules later.
+#   sqlmodel   — src/models/. The control plane's tables are declared once and
+#                shared by everything that reads them, and the declaration is
+#                also the typed object every consumer gets back from a query.
+#                Required rather than optional because the reconcile pass, the
+#                worker and boot-time hydration all need them, and none of
+#                those is optional.
+#   sqlalchemy — underneath it, and named here rather than inherited because
+#                the parts the models reach for directly — an explicitly named
+#                foreign key added after both tables exist, a partial unique
+#                index — are its own, not the layer above it.
+#   psycopg    — the driver for the database those tables live in. A control
+#                plane held in a local file cannot be shared by processes on
+#                different machines, which is the whole of what the pod and
+#                assignment tables express.
 #
-# src/tracing/ needs neither. It is standard library only, which is what makes
-# the tracing package copyable on its own — see test_tracing_is_standalone.py.
+# The last two are new, and they are the reason the runtime set is no longer
+# small enough to be pinned by a test. That pin is gone; see the note in
+# test_packaging.py.
+#
+# src/tracing/ needs none of these. It is standard library only, which is what
+# makes the tracing package copyable on its own — see
+# test_tracing_is_standalone.py.
 dependencies = [
     "httpx>=0.28,<0.29",
     "pydantic>=2.13,<3",
+    "sqlmodel>=0.0.16",
+    "sqlalchemy>=2.0,<3",
+    "psycopg[binary]>=3.2,<4",
 ]
 
 [project.optional-dependencies]
@@ -71,8 +93,7 @@ graph = ["ladybug"]
 # treats a failed call: resolution creates a new entity, classification falls
 # back to conceptual. The import is inside each factory rather than at module
 # scope, so `import src.common.judge` succeeds with this uninstalled and only a
-# call fails — which is what keeps the two runtime dependencies above the whole
-# list. See test_the_module_imports_with_the_client_library_absent.
+# call fails — which is what keeps this out of the runtime list above. See test_the_module_imports_with_the_client_library_absent.
 judge = ["openai>=3.3,<4"]
 
 # The HTTP surface (src/api/) and the two checks in front of it. Optional
@@ -116,6 +137,7 @@ packages = [
     "graphrag",
     "graphrag.api",
     "graphrag.common",
+    "graphrag.models",
     "graphrag.ingestion",
     "graphrag.knowledge",
     "graphrag.tracing",
