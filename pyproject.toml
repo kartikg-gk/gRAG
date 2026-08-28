@@ -14,7 +14,7 @@ requires-python = ">=3.12"
 # readme is dropped silently rather than raising.
 readme = "README.md"
 
-# Runtime dependencies. Five, and each earns its place:
+# Runtime dependencies. Seven, and each earns its place:
 #
 #   httpx      — src/ingestion/github.py. The GitHub REST client. Chosen over
 #                urllib for connection reuse across the hundreds of per-pull-
@@ -36,8 +36,18 @@ readme = "README.md"
 #                plane held in a local file cannot be shared by processes on
 #                different machines, which is the whole of what the pod and
 #                assignment tables express.
+#   celery     — src/worker/. Runs the compile off the request path, on a
+#                queue that survives the process that filled it. The redis
+#                extra is what lets it use the instance already here rather
+#                than needing a second service of its own.
+#   redis      — src/worker/. Holds which organisations are waiting to be
+#                recompiled and when they are due. Required because the
+#                compile path's whole guarantee — a burst of twenty events
+#                producing one build — rests on a read-and-remove that one
+#                server performs as a single operation, and there is no
+#                in-process substitute for that.
 #
-# The last two are new, and they are the reason the runtime set is no longer
+# The database and queue clients are the reason the runtime set is no longer
 # small enough to be pinned by a test. That pin is gone; see the note in
 # test_packaging.py.
 #
@@ -50,6 +60,8 @@ dependencies = [
     "sqlmodel>=0.0.16",
     "sqlalchemy>=2.0,<3",
     "psycopg[binary]>=3.2,<4",
+    "celery[redis]>=5.4,<6",
+    "redis>=5,<7",
 ]
 
 [project.optional-dependencies]
@@ -141,4 +153,5 @@ packages = [
     "graphrag.ingestion",
     "graphrag.knowledge",
     "graphrag.tracing",
+    "graphrag.worker",
 ]

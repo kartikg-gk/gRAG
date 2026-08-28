@@ -1,0 +1,19 @@
+# Services this project needs running locally.
+#
+# Redis only, for now. The database the control plane lives in is configured
+# separately as a local instance and is deliberately not here: a second,
+# containerised one would be a second control plane on the same machine, and
+# whichever process read the wrong one would be quietly serving from a fleet
+# that does not exist.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      # The client is in the image, so readiness needs nothing installed on
+      # the host and nothing built into this file beyond the check itself.
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

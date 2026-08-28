@@ -9,6 +9,12 @@ sqlmodel==0.0.39
 sqlalchemy==2.0.52
 psycopg[binary]==3.3.4
 
+# The compile path: the queue the work travels on, which organisations are
+# waiting to be rebuilt, and when they are due. See docker-compose.yml for the
+# local service the two of them share.
+celery[redis]==5.6.3
+redis==6.4.0
+
 # Adapter: only src/tracing_langgraph.py needs this.
 langchain-core==1.5.3
 
