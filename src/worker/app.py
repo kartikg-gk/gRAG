@@ -62,7 +62,7 @@ app = Celery(
     backend=REDIS_URL,
     # A worker started against this application imports this, which is what
     # registers the tasks in the process that has to run them.
-    include=["src.worker.tasks"],
+    include=["src.worker.tasks", "src.worker.compile"],
 )
 
 app.conf.update(

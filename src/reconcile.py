@@ -61,6 +61,15 @@ cannot.
 
 Progress is committed per tenant, as each finishes, so a pass that gets three
 done and then raises on the fourth leaves those three recorded.
+
+Retiring the build
+------------------
+
+A swap is also the moment the build that produced the artifact is over, and
+this pass is the only place that knows it: the artifact row names its job.
+Closing that job out is what frees the tenant for its next compile, because a
+build's own last write leaves it in a state the one-at-a-time rule still
+counts. See ``_retire_job``.
 """
 
 from __future__ import annotations
@@ -79,13 +88,17 @@ from .common.config import POD_ID
 from .models.control_plane import (
     ARTIFACT_ACTIVE,
     ARTIFACT_READY,
+    JOB_COMPLETED,
+    JOB_FAILED,
+    JOB_SWAPPED,
     LOAD_READY,
     GraphArtifact,
+    IngestJob,
     Organization,
     PodAssignment,
 )
 from .models.database import control_plane_sessions, create_control_plane_engine
-from .registry import GraphEntry, GraphRegistry
+from .registry import REGISTRY, GraphEntry, GraphRegistry
 
 logger = logging.getLogger("graphrag.reconcile")
 
@@ -96,6 +109,11 @@ logger = logging.getLogger("graphrag.reconcile")
 #: failed, superseded — is either unfinished or deliberately retired, and
 #: swapping to one would put a half-written graph in front of traffic.
 SERVABLE = (ARTIFACT_READY, ARTIFACT_ACTIVE)
+
+#: The job statuses that mean a build is over, however it ended.
+#:
+#: A job in one of these is not retired again — see ``_retire_job``.
+FINISHED = (JOB_SWAPPED, JOB_COMPLETED, JOB_FAILED)
 
 
 @dataclass(frozen=True)
@@ -128,17 +146,14 @@ def reconcile(
 
     Everything is injectable and everything has a default: the engine comes
     from the environment, the identifier from configuration, and the registry
-    has to be handed in by whatever owns the process's open graphs — there is
-    no process-wide one to reach for, and inventing one here would give this
-    pass its own set of graphs that nothing serves from.
+    from the module that holds the process's one. Falling back to *that* is
+    not the same as falling back to a fresh one — it is the object requests
+    are served from, so a pass called with no argument acts on the graphs
+    that are actually loaded.
 
     Returns an empty list when intent and reality already agree everywhere.
     """
-    if registry is None:
-        raise ValueError(
-            "reconcile needs the registry this process serves from; pass the "
-            "one the application built"
-        )
+    registry = registry if registry is not None else REGISTRY
 
     engine = engine if engine is not None else create_control_plane_engine()
     sessions = control_plane_sessions(engine)
@@ -204,6 +219,9 @@ def reconcile(
             assignment.confirmed_at = _now()
             if artifact.status == ARTIFACT_READY:
                 artifact.status = ARTIFACT_ACTIVE
+            # The build that produced this is over, and the row that says so
+            # is what frees the tenant for its next one.
+            _retire_job(db, artifact.job_id)
             # Per tenant, so a later failure does not undo this one.
             db.commit()
 
@@ -225,6 +243,62 @@ def reconcile(
             )
 
     return swaps
+
+
+def _retire_job(db, job_id: str | None) -> None:
+    """Close out the build that produced the artifact just swapped in.
+
+    **Only ever reached after a verified swap.** A tenant that was skipped
+    for an unusable artifact, or whose download failed its checksum, leaves
+    its job exactly where the compile left it — the build did not finish
+    successfully and the row must not say it did.
+
+    Why this exists at all
+    ----------------------
+
+    A compile's last write leaves its job at *registered*, which is inside
+    the in-flight set, and until something moves it further the constraint
+    allowing one build at a time refuses that organisation's next compile.
+    Nothing else in the project moves it. Without this, a tenant compiles
+    exactly once and then silently stops, with no error anywhere and a job
+    row that looks like a build still running.
+
+    Two writes, one commit
+    ----------------------
+
+    *Swapped* says this artifact reached a pod. *Completed* says the build is
+    over. They are separate facts recorded separately, even though today they
+    happen at the same instant and land in the same transaction, so no reader
+    outside it ever observes the first on its own.
+
+    **Today they are the same moment because one pod is all there is.** The
+    day two pods can hold the same tenant, they come apart: the first pod to
+    swap has established *swapped*, but the build is not finished for the
+    tenant until every assigned pod has confirmed, and retiring on the first
+    success would close a job while another pod is still pulling. That is the
+    next question here, and it is not answered — this code retires on the
+    first successful swap, which is correct for a fleet of one.
+
+    Idempotent. The pass runs on an interval and another tick, or another
+    pod, may have retired this job already; finding it finished is an
+    ordinary outcome, not a conflict.
+    """
+    if job_id is None:
+        # An artifact placed by hand, with no build behind it. There is
+        # nothing to retire and nothing wrong.
+        return
+
+    job = db.get(IngestJob, job_id)
+    if job is None or job.status in FINISHED:
+        return
+
+    # The artifact reached a pod...
+    job.status = JOB_SWAPPED
+    db.flush()
+    # ...and with that, the build is over. Separate writes for separate
+    # facts; the same commit, because today they are the same moment.
+    job.status = JOB_COMPLETED
+    job.finished_at = _now()
 
 
 def _arrived_intact(org_id: str, artifact: Any, destination: Path) -> bool:

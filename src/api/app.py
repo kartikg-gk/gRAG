@@ -68,7 +68,7 @@ from ..common.config import (
     WARM_EMBEDDER_ON_STARTUP,
 )
 from ..graphs import graph_label, graph_paths
-from ..registry import GraphRegistry
+from ..registry import REGISTRY
 from ..results import format_run
 from ..suggestions import OVERFETCH, suggestions_from
 from . import auth as auth_module
@@ -130,6 +130,43 @@ def _bring_up_the_control_plane() -> None:
         logger.warning(
             "the control plane is unavailable; continuing without it", exc_info=True
         )
+
+
+async def _authorise_session(session_id: str, user_id: str) -> None:
+    """Refuse a session that is not this caller's, before any query runs.
+
+    Imported here rather than at module scope, so a process that never
+    records anything never loads the history layer at all.
+
+    An unreachable history database reads as "not yours" and the query is
+    refused. That is the one place history is allowed to fail a request, and
+    it is deliberate: the alternative is answering into a session whose
+    ownership could not be established, which is the failure this check
+    exists to prevent.
+    """
+    import asyncio
+
+    from ..history import session_owner
+
+    owner = await asyncio.to_thread(session_owner, session_id)
+    if owner != user_id:
+        logger.warning("session %s refused for %s", session_id, user_id)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="no such session",
+        )
+
+
+def _record_query(session_id: str, query: str, answer) -> None:
+    """Write the answer into the session. Never raises — see ``record_trace``."""
+    from ..history import record_trace
+
+    record_trace(
+        session_id,
+        query,
+        plan={"intent": answer.intent, "alpha": answer.alpha, "beta": answer.beta},
+        result=answer.model_dump(mode="json"),
+    )
 
 
 def default_engine_factory():
@@ -197,18 +234,13 @@ def engine_for(request: Request, org_id: str):
     404 would say the tenant is unknown, which is a claim this layer is in no
     position to make.
     """
-    registry = getattr(request.app.state, "registry", None)
-    if registry is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="the store is not open",
-        )
-
-    engine = registry.get(org_id)
+    # The process's registry, not one hung off this application. There is
+    # one object, and it is the one startup attached the store to.
+    engine = REGISTRY.get(org_id)
     if engine is None and not auth_module.MULTI_TENANCY_ENABLED:
         # Single-tenant operation, unchanged: one store, opened at startup
         # from the configured path, serving whatever identifier arrives.
-        engine = registry.get(DEFAULT_TENANT_ORG_ID)
+        engine = REGISTRY.get(DEFAULT_TENANT_ORG_ID)
 
     if engine is None:
         raise HTTPException(
@@ -244,7 +276,10 @@ def create_app(*, engine_factory=None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         engine = build_engine()
-        registry = GraphRegistry()
+        # The process's registry, not a new one. Routes, the agent and this
+        # startup all reach the same object; two of them would be two sets
+        # of graphs, one of which nothing serves from.
+        registry = REGISTRY
         # Opening a second graph must not load a second copy of the models.
         # The loader closes over the instances this engine already warmed, so
         # every graph opened later shares them rather than paying the cold
@@ -261,7 +296,6 @@ def create_app(*, engine_factory=None) -> FastAPI:
             # and never consults the tenant root at all.
             registry.attach(DEFAULT_TENANT_ORG_ID, engine, path=str(engine.path))
             app.state.engine = engine
-            app.state.registry = registry
             app.state.active_path = Path(engine.path)
             app.state.pod_agent = None
             app.state.pod_agent_stop = None
@@ -319,7 +353,6 @@ def create_app(*, engine_factory=None) -> FastAPI:
                 app.state.pod_agent = None
                 app.state.pod_agent_stop = None
                 app.state.engine = None
-                app.state.registry = None
                 app.state.active_path = None
                 # Every handle the registry holds, not just the one startup
                 # opened -- anything attached during the run closes here too.
@@ -358,8 +391,19 @@ def create_app(*, engine_factory=None) -> FastAPI:
         The query goes through the facade's async entry point, so encoding and
         traversal run off the event loop rather than blocking every other
         request for the duration.
+
+        **A caller who names no session gets exactly the path that existed
+        before history did**: nothing is looked up, nothing is written, and
+        the history database is not consulted or even connected to. Naming a
+        session opts into recording, and a session that is not the caller's
+        is refused *before* any query work is done rather than after — there
+        is no reason to spend a retrieval on a request that will not be
+        answered.
         """
         import asyncio
+
+        if payload.session_id is not None:
+            await _authorise_session(payload.session_id, user_id)
 
         engine = engine_for(request, org_id)
         try:
@@ -376,7 +420,18 @@ def create_app(*, engine_factory=None) -> FastAPI:
                 detail="the query could not be completed",
             ) from exc
 
-        return QueryResponse(**format_run(run, documents))
+        answer = QueryResponse(**format_run(run, documents))
+
+        if payload.session_id is not None:
+            # After the answer exists, and off the event loop. A failure here
+            # is swallowed inside the recorder: a question answered but not
+            # recorded is a better outcome than one refused because the
+            # recording failed.
+            await asyncio.to_thread(
+                _record_query, payload.session_id, payload.query, answer
+            )
+
+        return answer
 
     @app.post("/subgraph", response_model=SubgraphResponse)
     async def subgraph(
@@ -503,12 +558,9 @@ def create_app(*, engine_factory=None) -> FastAPI:
         Closing the one just installed would leave the process serving a shut
         handle.
         """
-        registry = getattr(request.app.state, "registry", None)
-        if registry is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="the store is not open",
-            )
+        # The process's registry, the same object startup attached to and
+        # every other lookup here resolves through.
+        registry = REGISTRY
 
         match = next((path for path in graph_paths() if path.stem == payload.id), None)
         if match is None:

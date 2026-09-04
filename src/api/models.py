@@ -37,6 +37,14 @@ class QueryRequest(BaseModel):
             "default, so the number lives in one place rather than two."
         ),
     )
+    session_id: str | None = Field(
+        default=None,
+        description=(
+            "A session to record this query in. Unset, nothing is recorded "
+            "and the query is answered exactly as it was before history "
+            "existed."
+        ),
+    )
 
 
 class Chunk(BaseModel):

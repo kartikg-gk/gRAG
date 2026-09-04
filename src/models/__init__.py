@@ -49,6 +49,16 @@ from .control_plane import (
     Repository,
     create_control_plane_schema,
 )
+from .graph_store import (
+    EntityEdge,
+    EntityNode,
+    GRAPH_STORE_MODELS,
+    GRAPH_STORE_TABLES,
+    create_graph_store_schema,
+    ensure_graph_store_schema,
+    upsert_edges,
+    upsert_nodes,
+)
 from .database import (
     CONTROL_PLANE_URL_VARIABLE,
     DATABASE_URL_VARIABLE,
@@ -61,6 +71,14 @@ from .database import (
 
 __all__ = [
     "ApiKey",
+    "create_graph_store_schema",
+    "EntityEdge",
+    "EntityNode",
+    "ensure_graph_store_schema",
+    "GRAPH_STORE_MODELS",
+    "GRAPH_STORE_TABLES",
+    "upsert_edges",
+    "upsert_nodes",
     "ARTIFACT_ACTIVE",
     "ARTIFACT_BUILDING",
     "ARTIFACT_FAILED",

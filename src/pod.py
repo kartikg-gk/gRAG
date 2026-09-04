@@ -9,13 +9,16 @@ Neither calls the other. They are here together because together they are the
 whole of a process's fleet membership, and apart they are two functions each
 small enough to read in one sitting.
 
-The registry is handed in, never invented
------------------------------------------
+Which registry these act on
+---------------------------
 
-Both take the registry the application serves from. There is no process-wide
-one to reach for, and creating one here would give these passes their own set
-of open graphs that no request ever reads — every boot would look successful
-and every query would still find nothing loaded.
+Both take one, and both fall back to the process's own when they are given
+none. That fallback is a *shared* object, not a fresh one: it is what
+startup attached the store to and what every route resolves through, so a
+boot or a tick called with no argument loads graphs that requests can
+actually read. Constructing one here instead would give these passes their
+own set that nothing serves from — every boot looking successful and every
+query still finding nothing.
 
 Boot catches everything. The loop catches everything. The pass in the middle catches almost nothing.
 ---------------------------------------------------------------------------------------------------
@@ -61,7 +64,7 @@ from .models.control_plane import (
 )
 from .models.database import control_plane_sessions, create_control_plane_engine
 from .reconcile import reconcile
-from .registry import GraphRegistry
+from .registry import REGISTRY, GraphRegistry
 
 logger = logging.getLogger("graphrag.pod")
 
@@ -116,7 +119,7 @@ def hydrate(
     db: Session,
     *,
     pod_id: str = POD_ID,
-    registry: GraphRegistry,
+    registry: GraphRegistry | None = None,
     cache_root: str | Path | None = None,
     artifact_root: str | Path | None = None,
 ) -> list[Hydrated]:
@@ -130,6 +133,8 @@ def hydrate(
     them — an unreadable control plane at boot returns an empty summary and a
     log line, because the alternative is a process that will not start.
     """
+    registry = registry if registry is not None else REGISTRY
+
     try:
         assignments = db.exec(
             select(PodAssignment).where(
@@ -182,7 +187,7 @@ def hydrate(
 
 def boot(
     *,
-    registry: GraphRegistry,
+    registry: GraphRegistry | None = None,
     engine: Engine | None = None,
     pod_id: str = POD_ID,
     address: str | None = None,
@@ -198,6 +203,8 @@ def boot(
     visibility problem somebody can see and fix; refusing to serve tenants
     that are already assigned here would be the worse of the two failures.
     """
+    registry = registry if registry is not None else REGISTRY
+
     engine = engine if engine is not None else create_control_plane_engine()
     sessions = control_plane_sessions(engine)
 
@@ -224,7 +231,7 @@ def boot(
 
 async def poll(
     *,
-    registry: GraphRegistry,
+    registry: GraphRegistry | None = None,
     stop: asyncio.Event,
     engine: Engine | None = None,
     pod_id: str = POD_ID,
@@ -251,6 +258,8 @@ async def poll(
     shuts down and one that appears to hang. The timeout expiring is the
     ordinary case — it means the interval elapsed — and is not a failure.
     """
+    registry = registry if registry is not None else REGISTRY
+
     logger.info("%s: reconcile loop starting, every %ss", pod_id, interval)
     try:
         while not stop.is_set():

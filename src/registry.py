@@ -63,6 +63,15 @@ being returned to somebody.
 
 If the loader raises, the map is untouched — the failure happens before the
 lock is taken, so the previous entry stays in place and reachable.
+
+One per process
+---------------
+
+``REGISTRY`` at the bottom of this module is the one a running process uses.
+Consumers take a registry and fall back to it, which is how a pass called
+with no argument still acts on the graphs requests are being served from.
+See the note beside its declaration for why *sharing* one is a different
+thing from *defaulting to a fresh* one.
 """
 
 from __future__ import annotations
@@ -238,3 +247,42 @@ class GraphRegistry:
             close = getattr(entry.handle, "close", None)
             if close is not None:
                 close()
+
+
+#: The registry this process serves from.
+#:
+#: One object, for the life of the process. Startup attaches the store it
+#: opens to this, every route resolves through this, and the pod agent's
+#: passes act on this — so what a request can read is exactly what the agent
+#: has loaded, by construction rather than by everyone being handed the same
+#: argument.
+#:
+#: **A note for anyone who reads the reasoning that used to sit here.** The
+#: consumers of this object once refused to default at all, on the grounds
+#: that a default would hand each caller its own graphs that no request ever
+#: reads — every run looking like it worked while serving nothing. That
+#: reasoning was about defaulting to a **fresh instance**, and about that it
+#: is still exactly right. It says nothing against a **shared** one: this is
+#: the same object the application holds, with the same handles in it, and a
+#: caller that falls back to it lands on the process's real graphs rather
+#: than on an empty private copy.
+#:
+#: The distinction is the whole of the difference, and it is worth keeping in
+#: view — a future default that constructs rather than shares would look like
+#: this line and behave like the bug.
+REGISTRY = GraphRegistry()
+
+
+def reset_registry() -> None:
+    """Empty the process registry, closing whatever it holds.
+
+    Module-level state outlives a test unless something clears it, and a
+    registry carried from one test into the next is a graph the next test did
+    not attach. This is the same shape as the reset the graph store's
+    per-process schema guard has, and for the same reason.
+
+    Not for use in a running process: closing every handle underneath live
+    readers is precisely what the registry's own rules exist to prevent.
+    """
+    REGISTRY.close_all()
+    REGISTRY.set_loader(None)
