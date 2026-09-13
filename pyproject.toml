@@ -14,7 +14,7 @@ requires-python = ">=3.12"
 # readme is dropped silently rather than raising.
 readme = "README.md"
 
-# Runtime dependencies. Seven, and each earns its place:
+# Runtime dependencies. Eight, and each earns its place:
 #
 #   httpx      — src/ingestion/github.py. The GitHub REST client. Chosen over
 #                urllib for connection reuse across the hundreds of per-pull-
@@ -46,6 +46,11 @@ readme = "README.md"
 #                producing one build — rests on a read-and-remove that one
 #                server performs as a single operation, and there is no
 #                in-process substitute for that.
+#   python-dotenv — src/common/environment.py. Loads .env into the process
+#                environment before any setting is read. Every entry point
+#                reads its settings at import, so without it a value written
+#                only to the file is absent, and absent fails by defaulting
+#                rather than by raising.
 #
 # The database and queue clients are the reason the runtime set is no longer
 # small enough to be pinned by a test. That pin is gone; see the note in
@@ -62,6 +67,7 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "celery[redis]>=5.4,<6",
     "redis>=5,<7",
+    "python-dotenv>=1.0,<2",
 ]
 
 [project.optional-dependencies]

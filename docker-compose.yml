@@ -8,6 +8,10 @@
 services:
   redis:
     image: redis:7-alpine
+    # Back whenever the Docker engine is. Without a policy a restart of the
+    # engine leaves Redis stopped, and the lock and queue tests skip rather
+    # than fail, so the outage reads as a smaller suite instead of an error.
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:

@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import os
 
+from ..common.environment import load_environment
+
+# Before any setting below is read: they are read at import.
+load_environment()
+
 
 def _env_str(name: str, default: str = "") -> str:
     value = os.environ.get(name)

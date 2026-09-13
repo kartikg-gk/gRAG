@@ -15,6 +15,11 @@ the one exception, and it is deliberate — see the note beside it.
 
 from __future__ import annotations
 
+from .environment import load_environment
+
+# Before any setting below is read: they are read at import.
+load_environment()
+
 import socket
 
 # --------------------------------------------------------------------------
