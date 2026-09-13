@@ -108,6 +108,9 @@ class PersistStats:
     that was attempted and silently did nothing.
     """
 
+    #: Every entity written, by either pass. ``entities_from_text`` is the
+    #: share of this total that the mention pass created rather than a separate
+    #: tally to add on.
     entities: int = 0
     relationships: int = 0
     documents: int = 0
@@ -263,6 +266,11 @@ def _write_documents(
                     ),
                 )
                 known.add(target)
+                # Counted in the total as well as the breakdown. This entity
+                # reached the store; a total that omitted it would report fewer
+                # entities than were written, and the breakdown beside it would
+                # name the ones missing from it.
+                stats.entities += 1
                 stats.entities_from_text += 1
                 stats.mentions_to_new += 1
                 if embedder is not None:

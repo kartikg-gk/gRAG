@@ -214,6 +214,11 @@ def fast_client(*, api_key: str | None = None, base_url: str | None = None):
 
     A key passed here is the fast one, and selects the fast branch the same way
     the variable does.
+
+    Retries are off on both branches. This client answers inside the user's
+    latency budget, and the timeout applies per attempt, so leaving the
+    library's retries on would make the budget a fraction of the real cost.
+    ``chat_client`` keeps them, because nothing waits on the ingest question.
     """
     from openai import OpenAI
 
@@ -231,7 +236,14 @@ def fast_client(*, api_key: str | None = None, base_url: str | None = None):
         model = _required(JUDGE_MODEL, "GRAPHRAG_JUDGE_MODEL")
         endpoint = ENDPOINT_GENERAL
 
-    return FastEndpoint(OpenAI(api_key=key, base_url=url), model, endpoint)
+    # The library retries by default, and a per-attempt timeout multiplied by
+    # the attempts is not the budget this path advertises: measured against a
+    # real endpoint, a 0.05s budget took 2.253s to raise, and a call that
+    # exceeded the budget still succeeded on a retry the counters never saw.
+    # One attempt, and the fallback an unmatched query gets anyway.
+    return FastEndpoint(
+        OpenAI(api_key=key, base_url=url, max_retries=0), model, endpoint
+    )
 
 
 def _reply(response) -> str:

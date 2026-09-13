@@ -47,6 +47,23 @@ API_ROOT = "https://api.github.com"
 PER_PAGE = 100
 TIMEOUT = 30.0
 
+#: How many pages ``fetch_issues`` may walk before giving up on filling its
+#: limit.
+#:
+#: **Chosen, not measured**, because no measurement can settle it: the issues
+#: endpoint returns pull requests too and they are dropped here, so a page can
+#: contribute nothing and no bound on pages follows from a bound on results.
+#: Without a cap the walk ends only when the repository does.
+#:
+#: Ten pages is a thousand raw items at ``PER_PAGE``. A tracker that has not
+#: produced the asked-for issues in a thousand items is one where the caller
+#: wanted a different repository or a different limit, not more requests.
+#:
+#: Hitting the cap under-delivers rather than raising, which is the behaviour a
+#: limit already has: asking for ten issues from a repository holding two
+#: returns two. The run summary reports what was found either way.
+MAX_ISSUE_PAGES = 10
+
 #: Sent explicitly on every list endpoint that accepts them, rather than
 #: relying on GitHub's defaults. The defaults are not part of the API contract
 #: and have changed before; a silent change to them would silently change which
@@ -302,26 +319,43 @@ def _reset_description(response: httpx.Response) -> str:
 
 
 def _paginate(
-    session: httpx.Client, path: str, params: dict[str, Any] | None = None
+    session: httpx.Client,
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    max_pages: int | None = None,
 ) -> Iterator[dict]:
     """Yield raw items from ``path``, following ``Link`` ``rel="next"``.
 
     Pages are fetched lazily, so a caller that stops early stops the requests
     too. Query parameters apply to the first request only; GitHub's next URL
     already carries them.
+
+    ``max_pages`` stops the walk after that many requests. It is for callers
+    that drop items after they arrive: their own limit counts survivors, which
+    bounds nothing when a page contributes none. A caller that keeps every item
+    needs no bound, because its limit already stops the generator.
     """
     url: str | None = path
     request_params: dict[str, Any] | None = {**(params or {}), "per_page": PER_PAGE}
+    pages = 0
 
     while url is not None:
         response = _request(session, url, params=request_params)
         request_params = None
+        pages += 1
 
         items = response.json()
         if not isinstance(items, list):
             raise GitHubError(f"expected a list of items from {url}, got {type(items).__name__}")
 
         yield from items
+
+        # Checked after yielding, so a consumer that stops inside this page
+        # never pays for the check, and the page just served is counted.
+        if max_pages is not None and pages >= max_pages:
+            return
+
         url = response.links.get("next", {}).get("url")
 
 
@@ -370,9 +404,16 @@ def fetch_issues(
 
     GitHub's issues endpoint also returns pull requests; those carry a
     ``pull_request`` key and are dropped here so ``limit`` counts real issues.
+
+    Because that filter runs after each page arrives, ``limit`` bounds results
+    and not requests: a page of nothing but pull requests contributes no issue
+    to stop on. ``MAX_ISSUE_PAGES`` bounds the walk so a tracker holding few
+    issues cannot spend a whole rate limit looking for them.
     """
     path = f"/repos/{repo}/issues"
-    items = _paginate(session, path, {"state": state, **LIST_PARAMS})
+    items = _paginate(
+        session, path, {"state": state, **LIST_PARAMS}, max_pages=MAX_ISSUE_PAGES
+    )
     issues = (item for item in items if "pull_request" not in item)
     yield from islice(_validated(Issue, issues, path), limit)
 

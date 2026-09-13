@@ -85,6 +85,7 @@ class ContextGraph:
         *,
         read_pool_size: int = READ_POOL_SIZE,
         pool_timeout: float = POOL_TIMEOUT_SECONDS,
+        read_only: bool = False,
     ) -> None:
         import ladybug
 
@@ -92,8 +93,14 @@ class ContextGraph:
         self.path = str(path)
         self._pool_timeout = pool_timeout
         self._closed = False
+        #: Whether this handle may write. Exposed because a caller that has to
+        #: be able to state it did not write needs to be able to check it.
+        self.read_only = read_only
 
-        self._database = ladybug.Database(self.path)
+        # The engine replays its write-ahead log and checkpoints on connect, so
+        # an ordinary open changes the file before any statement runs. A tool
+        # that only reads cannot otherwise show that it only read.
+        self._database = ladybug.Database(self.path, read_only=read_only)
 
         # One writer, serialised. The lock covers schema changes and index
         # rebuilds too: those mutate the same catalogue the writes touch.
@@ -831,18 +838,25 @@ def open_context_graph(
     *,
     initialize: bool = True,
     migrate: bool = True,
+    read_only: bool = False,
 ) -> ContextGraph:
     """Open a graph store, ready to use.
 
     Creates the tables when asked, then brings an older database forward. Both
     are idempotent, so this is the ordinary way to open a store whether or not
     one already exists at the path.
+
+    ``read_only`` opens a handle that cannot write, and forces both of those
+    steps off: each writes to the catalogue, so neither can run against such a
+    handle, and leaving them to fail would make the flag depend on argument
+    order. A store opened this way leaves the file's bytes alone, which is what
+    lets a tool over a store say it did not write to it.
     """
-    graph = ContextGraph(path)
+    graph = ContextGraph(path, read_only=read_only)
     try:
-        if initialize:
+        if initialize and not read_only:
             graph.initialize_schema()
-        if migrate:
+        if migrate and not read_only:
             graph.migrate()
     except Exception:
         graph.close()
