@@ -592,6 +592,11 @@ DEFAULT_TENANT_ORG_ID = _env_str(
 #: that route refuses every request rather than accepting one it cannot check.
 ADMIN_SECRET_KEY = _env_str("GRAPHRAG_ADMIN_SECRET_KEY")
 
+#: The secret GitHub signs webhook deliveries with. **No default**: unset, the
+#: webhook route refuses every delivery, because a payload that cannot be
+#: verified is one anybody could have sent.
+GITHUB_WEBHOOK_SECRET = _env_str("GRAPHRAG_GITHUB_WEBHOOK_SECRET")
+
 #: Where the control plane lives is **not** here. It is a database URL read at
 #: connection time by ``src.models.database``, from
 #: ``GRAPHRAG_CONTROL_PLANE_DATABASE_URL`` or ``GRAPHRAG_DATABASE_URL``, and it
