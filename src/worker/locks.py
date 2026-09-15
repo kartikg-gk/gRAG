@@ -60,6 +60,7 @@ import contextlib
 import logging
 import uuid
 
+from .config import COMPILE_LOCK_TTL_SECONDS
 from .debounce import client
 
 logger = logging.getLogger("graphrag.worker.locks")
@@ -70,7 +71,9 @@ logger = logging.getLogger("graphrag.worker.locks")
 #: ordinary work: nothing here interrupts a compile that runs past it. Without
 #: an expiry, one crashed worker blocks its organisation permanently and the
 #: only cure is somebody noticing and deleting a key by hand.
-LOCK_EXPIRY_SECONDS = 1800
+#:
+#: Set through ``GRAPHRAG_COMPILE_LOCK_TTL``.
+LOCK_EXPIRY_SECONDS = COMPILE_LOCK_TTL_SECONDS
 
 
 #: Delete this lock, but only if the value is still the one that was written.
@@ -105,7 +108,8 @@ def compile_lock(org_id: str, *, connection=None, expiry: int = LOCK_EXPIRY_SECO
     # different values, which is what the release below compares against.
     token = uuid.uuid4().hex
 
-    acquired = bool(redis_client.set(key, token, nx=True, ex=expiry))
+    # Whole seconds: the expiry Redis accepts here is an integer.
+    acquired = bool(redis_client.set(key, token, nx=True, ex=int(expiry)))
 
     try:
         yield acquired

@@ -82,3 +82,10 @@ QUEUE_NAME = _env_str("GRAPHRAG_QUEUE_NAME", "graphrag")
 #: adds is a rounding error on the wait it is checking, long enough that a
 #: quiet fleet is doing one cheap read a minute rather than one a second.
 SWEEP_INTERVAL_SECONDS = _env_float("GRAPHRAG_SWEEP_INTERVAL", 30.0)
+
+#: How long a compile lock survives when nobody releases it.
+#:
+#: Half an hour. A safety release for a worker that died mid-compile, so it has
+#: to outlast any compile that is still running: a lock that expires under a
+#: live worker lets a second one start on the same organisation.
+COMPILE_LOCK_TTL_SECONDS = _env_float("GRAPHRAG_COMPILE_LOCK_TTL", 1800.0)
