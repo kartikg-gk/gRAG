@@ -74,6 +74,7 @@ from ..suggestions import OVERFETCH, suggestions_from
 from . import auth as auth_module
 from .auth import get_current_tenant_org, get_current_user
 from .onboarding import router as onboarding_router
+from .routing import TenantRoutingMiddleware
 from .webhooks import router as webhooks_router
 from .models import (
     GraphSummary,
@@ -361,6 +362,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
                 registry.close_all()
 
     app = FastAPI(title="graphrag", lifespan=lifespan)
+    app.add_middleware(TenantRoutingMiddleware)
 
     @app.get("/health", response_model=Health)
     def health(request: Request) -> Health:

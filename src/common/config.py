@@ -580,7 +580,7 @@ DEV_USER_ID = _env_str("GRAPHRAG_DEV_USER_ID", "dev-user-AUTHENTICATION-DISABLED
 
 #: Whether the tenant is resolved from an API key. Off means one tenant and no
 #: key required, which is the single-user development case.
-MULTI_TENANCY_ENABLED = _env_int("GRAPHRAG_MULTI_TENANCY_ENABLED", 1) == 1
+MULTI_TENANCY_ENABLED = _env_int("GRAPHRAG_MULTI_TENANCY_ENABLED", 0) == 1
 
 #: The organisation every request belongs to when tenancy is off. Named the
 #: same way as the development user, and for the same reason.
