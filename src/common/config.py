@@ -588,6 +588,10 @@ DEFAULT_TENANT_ORG_ID = _env_str(
     "GRAPHRAG_DEFAULT_TENANT_ORG_ID", "dev-org-SINGLE-TENANT"
 )
 
+#: The shared secret the admin onboarding route checks. **No default**: unset,
+#: that route refuses every request rather than accepting one it cannot check.
+ADMIN_SECRET_KEY = _env_str("GRAPHRAG_ADMIN_SECRET_KEY")
+
 #: Where the control plane lives is **not** here. It is a database URL read at
 #: connection time by ``src.models.database``, from
 #: ``GRAPHRAG_CONTROL_PLANE_DATABASE_URL`` or ``GRAPHRAG_DATABASE_URL``, and it

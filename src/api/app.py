@@ -73,6 +73,7 @@ from ..results import format_run
 from ..suggestions import OVERFETCH, suggestions_from
 from . import auth as auth_module
 from .auth import get_current_tenant_org, get_current_user
+from .onboarding import router as onboarding_router
 from .models import (
     GraphSummary,
     GraphsResponse,
@@ -609,5 +610,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
             "state_user_id": request.state.user_id,
             "state_org_id": request.state.org_id,
         }
+
+    app.include_router(onboarding_router)
 
     return app
