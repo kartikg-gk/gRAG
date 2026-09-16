@@ -477,6 +477,13 @@ def _env_str(name: str, default: str = "") -> str:
     return os.environ.get(name, "").strip() or default
 
 
+def _env_raw(name: str) -> str:
+    """A variable exactly as exported, or "" when unset. Nothing is trimmed."""
+    import os
+
+    return os.environ.get(name, "")
+
+
 #: Where the ingest question is asked. **No default** — see the note above.
 JUDGE_BASE_URL = _env_str("GRAPHRAG_JUDGE_BASE_URL")
 
@@ -578,9 +585,14 @@ CLERK_ALGORITHM = "RS256"
 #: record, a bug report — as an unauthenticated request rather than a person.
 DEV_USER_ID = _env_str("GRAPHRAG_DEV_USER_ID", "dev-user-AUTHENTICATION-DISABLED")
 
+#: The exact values of GRAPHRAG_MULTI_TENANCY_ENABLED that turn tenancy on.
+#: Compared as written: no trimming and no case folding.
+MULTI_TENANCY_ON_VALUES = ("1", "true", "True")
+
 #: Whether the tenant is resolved from an API key. Off means one tenant and no
-#: key required, which is the single-user development case.
-MULTI_TENANCY_ENABLED = _env_int("GRAPHRAG_MULTI_TENANCY_ENABLED", 0) == 1
+#: key required, which is the single-user development case, and is what any
+#: value outside MULTI_TENANCY_ON_VALUES gives, unset included.
+MULTI_TENANCY_ENABLED = _env_raw("GRAPHRAG_MULTI_TENANCY_ENABLED") in MULTI_TENANCY_ON_VALUES
 
 #: The organisation every request belongs to when tenancy is off. Named the
 #: same way as the development user, and for the same reason.

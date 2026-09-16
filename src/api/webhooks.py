@@ -124,9 +124,9 @@ async def github_webhook(request: Request, background: BackgroundTasks) -> dict:
         return {"status": "ignored", "event": event}
 
     # Parsed only after the signature matched, so this is GitHub's own output,
-    # and GitHub always sends a JSON object. Anything else is a fault and is
-    # left to fail as one rather than being read as an empty delivery.
-    payload = json.loads(body)
+    # and GitHub always sends a JSON object. A signed empty body is read as an
+    # empty object; any other body that is not JSON is left to fail as a fault.
+    payload = json.loads(body or b"{}")
 
     if event == "pull_request":
         action = payload.get("action")
