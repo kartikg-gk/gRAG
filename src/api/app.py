@@ -60,8 +60,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 
 from ..common.config import (
+    CORS_ORIGINS,
     DEFAULT_TENANT_ORG_ID,
     POD_ID,
     STORE_PATH,
@@ -73,6 +75,7 @@ from ..results import format_run
 from ..suggestions import OVERFETCH, suggestions_from
 from . import auth as auth_module
 from .auth import get_current_tenant_org, get_current_user
+from .history_routes import router as history_router
 from .onboarding import router as onboarding_router
 from .routing import TenantRoutingMiddleware
 from .webhooks import router as webhooks_router
@@ -363,6 +366,14 @@ def create_app(*, engine_factory=None) -> FastAPI:
 
     app = FastAPI(title="graphrag", lifespan=lifespan)
     app.add_middleware(TenantRoutingMiddleware)
+    # Added last, so it is the outermost layer: a refusal from the routing gate
+    # still carries the headers a browser needs to read it.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health", response_model=Health)
     def health(request: Request) -> Health:
@@ -614,6 +625,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
             "state_org_id": request.state.org_id,
         }
 
+    app.include_router(history_router)
     app.include_router(onboarding_router)
     app.include_router(webhooks_router)
 

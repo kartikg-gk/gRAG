@@ -609,6 +609,14 @@ ADMIN_SECRET_KEY = _env_str("GRAPHRAG_ADMIN_SECRET_KEY")
 #: verified is one anybody could have sent.
 GITHUB_WEBHOOK_SECRET = _env_str("GRAPHRAG_GITHUB_WEBHOOK_SECRET")
 
+#: The browser origins allowed to call the API, comma-separated. Any origin by
+#: default, which suits local use; a deployment names its frontend's origin.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in _env_str("GRAPHRAG_CORS_ORIGINS", "*").split(",")
+    if origin.strip()
+]
+
 #: Where the control plane lives is **not** here. It is a database URL read at
 #: connection time by ``src.models.database``, from
 #: ``GRAPHRAG_CONTROL_PLANE_DATABASE_URL`` or ``GRAPHRAG_DATABASE_URL``, and it

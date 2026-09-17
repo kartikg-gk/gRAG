@@ -110,7 +110,7 @@ def run_phases(
     now: int | None = None,
 ) -> CompileSummary:
     """Ingest, compile, upload, register, and point the organisation at it."""
-    from .compile import next_version, set_job_status
+    from .compile import finalize_job, next_version, set_job_status
 
     moment = now if now is not None else _now()
     repositories = db.exec(
@@ -146,8 +146,9 @@ def run_phases(
         #
         # Finished, not failed: a job that legitimately had nothing to do is
         # complete. It is also terminal, which releases this organisation for
-        # the next compile.
-        set_job_status(db, job_id, JOB_COMPLETED)
+        # the next compile, and it records when it stopped like any other
+        # finished job.
+        finalize_job(db, job_id, JOB_COMPLETED)
         logger.info("%s: no changes in any repository; nothing to compile", org_id)
         return CompileSummary(
             org_id=org_id,

@@ -61,6 +61,7 @@ logger = logging.getLogger("graphrag.worker.compile")
 #: same reason the statuses in the control plane are strings: every one of
 #: these crosses a queue as text.
 COMPILED = "compiled"
+SKIPPED = "skipped"
 LOCKED = "locked"
 UNKNOWN_ORGANIZATION = "unknown-organization"
 
@@ -144,7 +145,7 @@ def _compile(org_id: str, db: Session) -> str:
     job_id = job.job_id
 
     try:
-        run_phases(org_id, job_id, db)
+        summary = run_phases(org_id, job_id, db)
     except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
         logger.exception("%s: compile failed", org_id)
         # Both halves matter. The row is what anyone reading the database
@@ -152,6 +153,9 @@ def _compile(org_id: str, db: Session) -> str:
         finalize_job(db, job_id, JOB_FAILED, error=str(exc))
         raise
 
+    # A run that found nothing changed built nothing, and says so.
+    if getattr(summary, "skipped", False):
+        return SKIPPED
     return COMPILED
 
 

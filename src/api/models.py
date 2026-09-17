@@ -179,3 +179,43 @@ class SwitchResponse(BaseModel):
     id: str
     label: str
     nodes: int
+
+
+class SessionRequest(BaseModel):
+    """Start a session, or retitle one the caller owns.
+
+    No user field: who is asking comes from the session token alone, so a
+    field of that name in the body is ignored rather than read.
+    """
+
+    title: str | None = Field(
+        default=None,
+        description="The session's title. Empty uses the default title.",
+    )
+    session_id: str | None = Field(
+        default=None,
+        description="Unset creates a session; set renames that session.",
+    )
+    email: str | None = Field(
+        default=None,
+        description="The caller's address, recorded the first time they are seen.",
+    )
+
+
+class SessionSummaryResponse(BaseModel):
+    """One session, as its owner sees it."""
+
+    session_id: str
+    title: str
+    created_at: int
+
+
+class TraceRecordResponse(BaseModel):
+    """One recorded question in a session and what answering it involved."""
+
+    trace_id: str
+    session_id: str
+    query: str
+    plan: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    created_at: int
