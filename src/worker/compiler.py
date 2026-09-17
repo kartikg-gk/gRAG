@@ -67,6 +67,9 @@ BATCH_SIZE = 1000
 #: edge whose kind was not preserved.
 ARTIFACT_RELATION = "CO_OCCURS"
 
+#: The store itself and every sidecar a previous build may have left beside it.
+STALE_SUFFIXES = ("", ".wal", "-shm", ".tmp")
+
 
 @dataclass(frozen=True)
 class CompiledArtifact:
@@ -178,18 +181,24 @@ def _stream(
 
 
 def _remove(path: Path) -> None:
-    """Delete whatever is at ``path``, file or directory.
+    """Delete whatever a previous build left at ``path``, file or directory.
 
-    Both, because a store is a file in this project and a directory in some
-    configurations of the engine underneath it, and a build that removed only
-    one of those would silently accumulate into the other.
+    The store and each of its sidecars: a build that crashed leaves its log
+    beside the file, and a fresh store opened next to that log replays it and
+    refuses to open. Both kinds, because a store is a file in this project and
+    a directory in some configurations of the engine underneath it, and a build
+    that removed only one of those would silently accumulate into the other.
+
+    A piece that cannot be removed is logged and skipped, so the rest still go.
     """
-    if not path.exists():
-        return
+    import shutil
 
-    if path.is_dir():
-        import shutil
-
-        shutil.rmtree(path)
-    else:
-        path.unlink()
+    for suffix in STALE_SUFFIXES:
+        piece = Path(f"{path}{suffix}")
+        try:
+            if piece.is_dir():
+                shutil.rmtree(piece)
+            elif piece.exists():
+                piece.unlink()
+        except OSError as exc:
+            logger.warning("could not remove %s before the build: %s", piece, exc)

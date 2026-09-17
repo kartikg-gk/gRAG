@@ -189,8 +189,11 @@ class ContextGraph:
 
     # -- schema ------------------------------------------------------------
 
+    # No vector index here. Writing embeddings into a table that already
+    # carries one crashes the engine's vector extension at real corpus sizes,
+    # so the index is built once, after the data is in, by whoever wrote it.
     def initialize_schema(self) -> None:
-        """Create the tables and the vector index. Safe to call repeatedly."""
+        """Create the four tables and nothing else. Safe to call repeatedly."""
         self.execute(
             f"CREATE NODE TABLE IF NOT EXISTS {NODE_TABLE}("
             f"  id STRING PRIMARY KEY,"
@@ -216,7 +219,6 @@ class ContextGraph:
             f"  FROM {DOC_TABLE} TO {NODE_TABLE}"
             f")"
         )
-        self.build_vector_index()
 
     def table_columns(self, table: str) -> dict[str, str]:
         """Column name to declared type, as the database currently has it."""
