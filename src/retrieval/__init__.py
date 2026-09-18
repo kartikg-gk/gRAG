@@ -31,6 +31,7 @@ from .graph_arm import GraphHit, GraphResult, Hop, traverse
 from .intent import Intent, classify, first_marker
 from .pipeline import RetrievalRun, retrieve
 from .recency import age_and_decay, age_days, decay_factor, half_life_for
+from .router import RetrievalRouter, shutdown_embed_executor
 from .seeds import (
     TIER_EXACT,
     TIER_FALLBACK,
@@ -91,4 +92,6 @@ __all__ = [
     "RecencyRecord",
     "Metrics",
     "age_and_decay",
+    "RetrievalRouter",
+    "shutdown_embed_executor",
 ]

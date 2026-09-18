@@ -20,6 +20,7 @@ from .environment import load_environment
 # Before any setting below is read: they are read at import.
 load_environment()
 
+import os
 import socket
 from pathlib import Path
 
@@ -210,11 +211,14 @@ VECTOR_METRIC = "cosine"
 #: Read connections held open for concurrent queries. The engine serialises
 #: writes but reads scale across connections, so this bounds how many can run
 #: at once rather than how many exist.
-READ_POOL_SIZE = 4
+try:
+    READ_POOL_SIZE = max(1, int(os.environ.get("GRAPHRAG_DB_POOL_SIZE", "10")))
+except ValueError:
+    READ_POOL_SIZE = 10
 
 #: Seconds to wait for a free read connection before giving up. A caller that
 #: waits forever on an exhausted pool looks like a hang, not a queue.
-POOL_TIMEOUT_SECONDS = 30.0
+POOL_TIMEOUT_SECONDS = 15.0
 
 
 # --------------------------------------------------------------------------
@@ -271,7 +275,7 @@ def _env_float(name: str, default: float) -> float:
 #: Confidence decay already bounds depth on its own — a path multiplies, so
 #: 0.95 twice is 0.90 while 0.35 twice is 0.12. This bound is a rail against
 #: runaway traversal rather than the thing shaping results.
-MAX_HOPS = _env_int("GRAPHRAG_MAX_HOPS", 2)
+MAX_HOPS = _env_int("GRAPHRAG_GRAPH_MAX_HOPS", 2)
 
 #: Lowest vector similarity that may seed a traversal.
 #:
@@ -284,7 +288,7 @@ MAX_HOPS = _env_int("GRAPHRAG_MAX_HOPS", 2)
 #: seed only decides where to start looking, and a wrong seed costs a traversal
 #: that finds nothing. The query side can afford to be generous where the write
 #: side cannot.
-SEED_MIN_SIM = _env_float("GRAPHRAG_SEED_MIN_SIM", 0.35)
+SEED_MIN_SIM = _env_float("GRAPHRAG_GRAPH_SEED_MIN_SIM", 0.35)
 
 #: How many fuzzy seeds tier 2 may contribute.
 #:
@@ -292,7 +296,7 @@ SEED_MIN_SIM = _env_float("GRAPHRAG_SEED_MIN_SIM", 0.35)
 #: from the whole vector result set, and the graph arm stops being a traversal
 #: from somewhere specific — it becomes a walk from everywhere, which returns
 #: the graph and ranks it by nothing the traversal contributed.
-SEED_TOP_N = _env_int("GRAPHRAG_SEED_TOP_N", 3)
+SEED_TOP_N = _env_int("GRAPHRAG_GRAPH_SEED_TOP_N", 3)
 
 #: Per-relation degree above which a node's neighbours are suppressed.
 #:
@@ -307,6 +311,14 @@ MAX_DEGREE = _env_int("GRAPHRAG_MAX_DEGREE", 10)
 #: in their result counts impossible to attribute.
 TOP_K_VECTOR = _env_int("GRAPHRAG_TOP_K_VECTOR", 10)
 TOP_K_GRAPH = _env_int("GRAPHRAG_TOP_K_GRAPH", 10)
+
+#: Per-frontier neighbour cap used by the retrieval graph stream.
+GRAPH_NEIGHBOR_K = _env_int("GRAPHRAG_GRAPH_NEIGHBOR_K", 5)
+
+#: Query length and shared embedding concurrency bounds.
+MAX_QUERY_CHARS = _env_int("GRAPHRAG_MAX_QUERY_CHARS", 2000)
+EMBED_WORKERS = _env_int("GRAPHRAG_EMBED_WORKERS", 4)
+QUERY_EXTRACT_CACHE = _env_int("GRAPHRAG_QUERY_EXTRACT_CACHE", 512)
 
 
 # --------------------------------------------------------------------------
@@ -332,17 +344,19 @@ RELATIONAL_MARKERS = (
     "whose",
     "which",
     "what caused",
-    "what closed",
-    "what fixed",
-    "what broke",
+    "caused by",
+    "because of",
     "related to",
     "connected to",
     "depends on",
-    "blocked by",
-    "reviewed",
-    "authored",
-    "owner of",
+    "owns",
+    "owned by",
+    "between",
+    "path from",
     "linked to",
+    "responsible for",
+    "which pr",
+    "which ticket",
 )
 
 #: Phrasings that ask about meaning rather than connection.
@@ -354,15 +368,18 @@ SEMANTIC_MARKERS = (
     "summarise",
     "summarize",
     "describe",
-    "how does",
-    "why does",
     "what is",
+    "how does",
+    "concept",
+    "definition",
     "purpose of",
-    "rationale",
 )
 
 INTENT_RELATIONAL = "relational"
-INTENT_CONCEPTUAL = "conceptual"
+INTENT_SEMANTIC = "semantic"
+# Compatibility for callers that import the old name; its value is pinned to
+# the new public label.
+INTENT_CONCEPTUAL = INTENT_SEMANTIC
 
 #: How a query was classified. Recorded so a run can report the stage-two rate
 #: rather than leaving it to be inferred from timing.
@@ -415,6 +432,7 @@ RECENCY_FLOOR = _env_float("GRAPHRAG_RECENCY_FLOOR", 0.35)
 #: Days after which a node of this type is worth half as much.
 HALF_LIFE_DAYS = {
     NODE_TICKET: 21.0,
+    "Issue": 21.0,
     NODE_COMMIT: 45.0,
     NODE_PR: 60.0,
     NODE_FILE: 120.0,

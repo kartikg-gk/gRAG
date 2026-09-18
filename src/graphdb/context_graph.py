@@ -92,6 +92,7 @@ class ContextGraph:
 
         self._ladybug = ladybug
         self.path = str(path)
+        read_pool_size = max(1, int(read_pool_size))
         self._pool_timeout = pool_timeout
         self._closed = False
         #: Whether this handle may write. Exposed because a caller that has to

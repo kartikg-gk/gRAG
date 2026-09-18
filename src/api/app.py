@@ -75,11 +75,10 @@ from ..common.config import (
     SENTRY_TRACES_SAMPLE_RATE,
     STORE_PATH,
     TOP_K_VECTOR,
-    WARM_EMBEDDER_ON_STARTUP,
 )
 from ..graphs import graph_label, graph_paths
 from ..registry import REGISTRY
-from ..retrieval.response import build_context, format_page_content, routed_response
+from ..retrieval.response import format_page_content
 from . import auth as auth_module
 from .auth import get_current_tenant_org, get_current_user
 from .history_routes import router as history_router
@@ -96,11 +95,6 @@ from .routing import TenantRoutingMiddleware
 from .webhooks import router as webhooks_router
 
 logger = logging.getLogger("graphrag.api.app")
-
-#: The text embedded at startup to pay the model's cold start. Its content is
-#: irrelevant — only that it is short and that something goes through the
-#: model before a caller does.
-WARMUP_TEXT = "warm"
 
 #: The variable that switches the pod agent on, and the one value that does
 #: it. See the module docstring for why this is compared rather than tested
@@ -211,15 +205,17 @@ def default_engine_factory():
     model, and importing this module — to read its routes, to build an app for
     a test — must not.
     """
-    from ..analysis import Similarity
+    from ..analysis import Extractor, Similarity
+    from ..common.judge import IntentJudge
     from ..engine import Engine
 
     embedder = Similarity()
-    if WARM_EMBEDDER_ON_STARTUP:
-        # The whole point of doing this at startup. It has to be a real embed:
-        # constructing the object does not load the weights.
-        embedder.vector(WARMUP_TEXT)
-    return Engine(STORE_PATH, embedder=embedder)
+    extractor = Extractor()
+    try:
+        judge = IntentJudge()
+    except Exception:
+        judge = None
+    return Engine(STORE_PATH, embedder=embedder, extractor=extractor, judge=judge)
 
 
 def graph_loader(engine):
@@ -521,6 +517,11 @@ def create_app(*, engine_factory=None) -> FastAPI:
             app.state.pod_agent = None
             app.state.pod_agent_stop = None
 
+            try:
+                await asyncio.to_thread(engine.warm)
+            except Exception:  # noqa: BLE001 - cold is slower, not fatal
+                logger.warning("retrieval warm-up failed; continuing cold", exc_info=True)
+
             _bring_up_history()
             _bring_up_the_control_plane()
 
@@ -565,6 +566,9 @@ def create_app(*, engine_factory=None) -> FastAPI:
                 app.state.engine = None
                 app.state.active_path = None
                 registry.close_all()
+                from ..retrieval.router import shutdown_embed_executor
+
+                shutdown_embed_executor()
 
     app = FastAPI(title="graphRAG API", version="0.1.0", lifespan=lifespan)
 
@@ -599,13 +603,12 @@ def create_app(*, engine_factory=None) -> FastAPI:
         from .. import history as history_module
 
         engine = engine_for(request, org_id)
-        run = await engine.retrieve_async(req.query, req.top_k or TOP_K_VECTOR)
-        response = await asyncio.to_thread(routed_response, run, engine.store)
+        response = await engine.route_async(req.query, req.top_k or TOP_K_VECTOR)
 
         payload = asdict(response)
         for node, result in zip(response.results, payload["results"]):
             result["page_content"] = format_page_content(node)
-        payload["context"] = build_context(response.results)
+        payload["context"] = engine.router.build_context(response.results)
 
         if req.session_id:
             owner = await asyncio.to_thread(history_module.session_owner, req.session_id)

@@ -46,7 +46,7 @@ def _epoch(value) -> float | None:
     raw column values hand back integers. Converting at the edge keeps the
     arithmetic below in one unit.
     """
-    if value is None:
+    if value is None or value == 0:
         return None
     if isinstance(value, datetime):
         moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
