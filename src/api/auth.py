@@ -380,7 +380,8 @@ def resolve_org(api_key: str) -> str:
         logger.warning("api key rejected: no record for the presented key")
         raise _unauthorized()
 
-    if record.is_revoked:
+    verified = verify_key(record, hashed)
+    if verified is None and record.is_revoked:
         # Worth its own line: a revoked key still in use means a credential
         # was not rotated out of a running client, or was stolen.
         logger.warning(
@@ -391,11 +392,11 @@ def resolve_org(api_key: str) -> str:
         )
         raise _unauthorized()
 
-    if not verify_key(record, hashed):
+    if verified is None:
         logger.warning("api key rejected: key_id=%s failed verification", record.key_id)
         raise _unauthorized()
 
-    return record.org_id
+    return verified.org_id
 
 
 async def get_current_tenant_org(request: Request):

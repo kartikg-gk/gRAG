@@ -60,7 +60,7 @@ import contextlib
 import logging
 import uuid
 
-from .config import COMPILE_LOCK_TTL_SECONDS
+from .config import COMPILE_LOCK_TTL
 from .debounce import client
 
 logger = logging.getLogger("graphrag.worker.locks")
@@ -73,7 +73,7 @@ logger = logging.getLogger("graphrag.worker.locks")
 #: only cure is somebody noticing and deleting a key by hand.
 #:
 #: Set through ``GRAPHRAG_COMPILE_LOCK_TTL``.
-LOCK_EXPIRY_SECONDS = COMPILE_LOCK_TTL_SECONDS
+LOCK_EXPIRY_SECONDS = COMPILE_LOCK_TTL
 
 
 #: Delete this lock, but only if the value is still the one that was written.
@@ -91,7 +91,7 @@ return 0
 
 def lock_key(org_id: str) -> str:
     """Where the lock for one organisation lives."""
-    return f"graphrag:compile:lock:{org_id}"
+    return f"reconcile:lock:{org_id}"
 
 
 @contextlib.contextmanager

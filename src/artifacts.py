@@ -35,7 +35,7 @@ at put time precisely so a reader never has to guess.
 Layout
 ------
 
-A key is ``tenants/<tenant>/<version>.db`` and the local backend puts it at
+A key is ``artifacts/<tenant>/v<version>.lbug`` and the local backend puts it at
 ``<root>/<key>``, so a key and the root give the path with no lookup. The
 cloud backend uses the same key as the object name under its bucket, so the
 two layouts read the same in a listing.
@@ -54,6 +54,7 @@ from urllib.parse import urlparse
 from .common.config import (
     ARTIFACT_BACKEND,
     ARTIFACT_BUCKET,
+    ARTIFACT_PREFIX,
     ARTIFACT_REGION,
     ARTIFACT_ROOT,
     POD_CACHE_ROOT,
@@ -72,7 +73,7 @@ CHUNK_BYTES = 1024 * 1024
 
 #: Extension a stored artifact carries. The stores this moves are single
 #: files, so the key names one.
-ARTIFACT_SUFFIX = ".db"
+ARTIFACT_SUFFIX = ".lbug"
 
 
 class ArtifactError(RuntimeError):
@@ -97,6 +98,10 @@ class BackendNotConfigured(ArtifactError):
 # --------------------------------------------------------------------------
 
 
+def _canonical_version(version: str) -> str:
+    return version if version.startswith("v") else f"v{version}"
+
+
 def artifact_key(tenant: str, version: str) -> str:
     """Where a tenant's graph at a given version lives, as a storage key.
 
@@ -108,7 +113,8 @@ def artifact_key(tenant: str, version: str) -> str:
         raise ArtifactError(
             f"a key needs both a tenant and a version, got {tenant!r} and {version!r}"
         )
-    return f"tenants/{tenant}/{version}{ARTIFACT_SUFFIX}"
+    prefix = ARTIFACT_PREFIX.strip("/")
+    return f"{prefix}/{tenant}/{_canonical_version(version)}{ARTIFACT_SUFFIX}"
 
 
 def local_path_for(key: str, *, root: str | Path | None = None) -> Path:
@@ -134,7 +140,7 @@ def pod_cache_path(
     a cache is safe to delete.
     """
     base = Path(root if root is not None else POD_CACHE_ROOT)
-    return base / pod / tenant / f"{version}{ARTIFACT_SUFFIX}"
+    return base / pod / tenant / f"{_canonical_version(version)}{ARTIFACT_SUFFIX}"
 
 
 def _cloud_uri(bucket: str, key: str) -> str:

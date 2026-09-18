@@ -21,10 +21,8 @@ Declared once here, they share both.
 The definitions are the schema. There is no second place where a column's type
 or default is written down, so the two cannot disagree.
 
-Table names are set explicitly on every model. The default a class name would
-produce is not what these tables are called, and a declaration style that
-quietly renamed a table would be a schema change wearing the clothes of a
-refactor.
+Table names use SQLModel's class-name defaults. They are part of the control-
+plane contract, so foreign keys below name those exact generated tables.
 
 The three references that point in a circle
 -------------------------------------------
@@ -146,9 +144,9 @@ _IN_FLIGHT_SQL = ", ".join(f"'{status}'" for status in JOB_IN_FLIGHT)
 #: The names of the three constraints that close the cycle. Explicit, so a
 #: later change refers to a name this project chose rather than to whatever
 #: the database happened to generate.
-ORGANIZATION_ARTIFACT_FK = "fk_organizations_active_artifact"
-ARTIFACT_JOB_FK = "fk_graph_artifacts_job"
-JOB_ARTIFACT_FK = "fk_ingest_jobs_artifact"
+ORGANIZATION_ARTIFACT_FK = "fk_organization_desired_artifact"
+ARTIFACT_JOB_FK = "fk_graphartifact_job"
+JOB_ARTIFACT_FK = "fk_ingestjob_artifact"
 
 #: The three, as one group. Tested against what the schema actually created.
 CIRCULAR_FOREIGN_KEYS = (
@@ -174,13 +172,11 @@ class ApiKey(SQLModel, table=True):
     could find.
     """
 
-    __tablename__ = "api_keys"
-
     key_id: str = Field(primary_key=True)
     #: The SHA-256 digest of the key. **Never the key itself**, so a copy of
     #: this database does not let its holder authenticate as anyone.
     hashed_key: str = Field(unique=True, index=True)
-    org_id: str = Field(foreign_key="organizations.org_id", index=True)
+    org_id: str = Field(foreign_key="organization.org_id", index=True)
     scopes: str = Field(
         default=DEFAULT_SCOPES,
         sa_column=Column(String, nullable=False, server_default=DEFAULT_SCOPES),
@@ -198,8 +194,6 @@ class ApiKey(SQLModel, table=True):
 class Organization(SQLModel, table=True):
     """A tenant, and the artifact it is supposed to be serving."""
 
-    __tablename__ = "organizations"
-
     org_id: str = Field(primary_key=True)
     name: str
     plan: str
@@ -212,12 +206,12 @@ class Organization(SQLModel, table=True):
     #: One of the three that close the cycle, so the reference is spelled out
     #: here rather than as a string: this is where the name it is created
     #: under, and the instruction to add it after both tables exist, live.
-    active_artifact_id: Optional[str] = Field(
+    desired_artifact_id: Optional[str] = Field(
         default=None,
         sa_column=Column(
             String,
             ForeignKey(
-                "graph_artifacts.artifact_id",
+                "graphartifact.artifact_id",
                 use_alter=True,
                 name=ORGANIZATION_ARTIFACT_FK,
             ),
@@ -232,7 +226,6 @@ class Organization(SQLModel, table=True):
 class Repository(SQLModel, table=True):
     """An upstream repository a tenant has registered for ingestion."""
 
-    __tablename__ = "repositories"
     __table_args__ = (
         # One provider repository registers once per tenant. Two rows for the
         # same repo would each carry their own sync cursor, and ingestion
@@ -241,47 +234,56 @@ class Repository(SQLModel, table=True):
             "org_id",
             "provider",
             "provider_repo_id",
-            name="repositories_one_per_provider_repo",
+            name="repository_one_per_provider_repo",
         ),
     )
 
     repo_id: str = Field(primary_key=True)
-    org_id: str = Field(foreign_key="organizations.org_id", index=True)
+    org_id: str = Field(foreign_key="organization.org_id", index=True)
     provider: str
     provider_repo_id: str
     name: str
     default_branch: Optional[str] = Field(default=None)
-    last_sync_cursor: Optional[str] = Field(default=None)
+    last_synced_cursor: Optional[str] = Field(default=None)
     last_synced_at: Optional[int] = Field(default=None)
     status: str
-    #: The provider token for this repository. **Nothing writes this and
-    #: nothing may.** Storing a usable token needs a key-management piece that
-    #: does not exist yet, and a token written here in the meantime would be a
-    #: plaintext credential in a database that gets backed up and copied. The
-    #: column is declared so that adding encryption later is a writer and not
-    #: a schema change; until then it stays NULL.
-    provider_credential: Optional[str] = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    #: Fernet ciphertext only. Plaintext is accepted and returned exclusively
+    #: through the two helpers below and never assigned to this field.
+    github_token: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: int
+
+    def set_github_token(self, plain_token: Optional[str]) -> None:
+        if not plain_token:
+            self.github_token = None
+            return
+
+        from ..vault import encrypt
+
+        self.github_token = encrypt(plain_token)
+
+    def get_github_token(self) -> Optional[str]:
+        if not self.github_token:
+            return None
+        from ..vault import decrypt
+
+        return decrypt(self.github_token)
 
 
 class GraphArtifact(SQLModel, table=True):
     """One built graph, addressable and checksummed."""
 
-    __tablename__ = "graph_artifacts"
     __table_args__ = (
         # A version number names one artifact for one tenant. Without this,
         # two builds racing both call themselves version 4, and a reader
         # asking for version 4 gets whichever one it happens to see.
-        UniqueConstraint("org_id", "version", name="graph_artifacts_one_per_version"),
+        UniqueConstraint("org_id", "version", name="graphartifact_one_per_version"),
     )
 
     artifact_id: str = Field(primary_key=True)
-    org_id: str = Field(foreign_key="organizations.org_id", index=True)
+    org_id: str = Field(foreign_key="organization.org_id", index=True)
     version: int
-    uri: str
-    checksum: Optional[str] = Field(default=None)
+    s3_uri: str
+    checksum_sha256: Optional[str] = Field(default=None)
     size_bytes: Optional[int] = Field(default=None)
     entity_count: Optional[int] = Field(default=None)
     status: str = Field(
@@ -293,11 +295,11 @@ class GraphArtifact(SQLModel, table=True):
     #: the cycle be written in an order that exists.
     #:
     #: The second of the three that close the cycle.
-    job_id: Optional[str] = Field(
+    built_by_job_id: Optional[str] = Field(
         default=None,
         sa_column=Column(
             String,
-            ForeignKey("ingest_jobs.job_id", use_alter=True, name=ARTIFACT_JOB_FK),
+            ForeignKey("ingestjob.job_id", use_alter=True, name=ARTIFACT_JOB_FK),
             nullable=True,
             index=True,
         ),
@@ -308,7 +310,6 @@ class GraphArtifact(SQLModel, table=True):
 class IngestJob(SQLModel, table=True):
     """One build, from queued to whatever became of it."""
 
-    __tablename__ = "ingest_jobs"
     __table_args__ = (
         # One build at a time per tenant, decided by the database.
         #
@@ -322,7 +323,7 @@ class IngestJob(SQLModel, table=True):
         # Declared for both dialects the project runs on, from the one status
         # group above rather than a list written out again.
         Index(
-            "ingest_jobs_one_in_flight",
+            "ingestjob_one_in_flight",
             "org_id",
             unique=True,
             postgresql_where=text(f"status IN ({_IN_FLIGHT_SQL})"),
@@ -331,9 +332,9 @@ class IngestJob(SQLModel, table=True):
     )
 
     job_id: str = Field(primary_key=True)
-    org_id: str = Field(foreign_key="organizations.org_id", index=True)
+    org_id: str = Field(foreign_key="organization.org_id", index=True)
     repo_id: Optional[str] = Field(
-        default=None, foreign_key="repositories.repo_id", index=True
+        default=None, foreign_key="repository.repo_id", index=True
     )
     trigger: str
     status: str = Field(
@@ -345,12 +346,12 @@ class IngestJob(SQLModel, table=True):
     #: What this build produced. The third of the three that close the cycle,
     #: and nullable for the same reason: a build that has not finished has not
     #: produced anything yet, which is what makes the ordered write possible.
-    artifact_id: Optional[str] = Field(
+    produced_artifact_id: Optional[str] = Field(
         default=None,
         sa_column=Column(
             String,
             ForeignKey(
-                "graph_artifacts.artifact_id", use_alter=True, name=JOB_ARTIFACT_FK
+                "graphartifact.artifact_id", use_alter=True, name=JOB_ARTIFACT_FK
             ),
             nullable=True,
             index=True,
@@ -364,8 +365,6 @@ class IngestJob(SQLModel, table=True):
 
 class Pod(SQLModel, table=True):
     """One serving process, and when it was last heard from."""
-
-    __tablename__ = "pods"
 
     pod_id: str = Field(primary_key=True)
     address: str
@@ -385,16 +384,14 @@ class PodAssignment(SQLModel, table=True):
     is the same fact, not a second one.
     """
 
-    __tablename__ = "pod_assignments"
-
-    pod_id: str = Field(foreign_key="pods.pod_id", primary_key=True, index=True)
+    pod_id: str = Field(foreign_key="pod.pod_id", primary_key=True, index=True)
     org_id: str = Field(
-        foreign_key="organizations.org_id", primary_key=True, index=True
+        foreign_key="organization.org_id", primary_key=True, index=True
     )
-    #: Reality, against the organisation's ``active_artifact_id``, which is
+    #: Reality, against the organisation's ``desired_artifact_id``, which is
     #: intent. The two are apart so the question can be asked.
     artifact_id: Optional[str] = Field(
-        default=None, foreign_key="graph_artifacts.artifact_id", index=True
+        default=None, foreign_key="graphartifact.artifact_id", index=True
     )
     load_status: str = Field(
         default=LOAD_PULLING,

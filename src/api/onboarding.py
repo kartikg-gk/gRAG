@@ -44,7 +44,7 @@ import secrets
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..common.config import ADMIN_SECRET_KEY
 from ..control_plane import PREFIX_LENGTH, hash_api_key, new_api_key
@@ -78,6 +78,8 @@ FAILED_DETAIL = "tenant provisioning failed"
 
 
 class ProvisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tenant_name: str
     #: ``owner/repo``.
     repo_name: str
@@ -167,7 +169,7 @@ def provision(payload: ProvisionRequest) -> ProvisionResponse:
                     provider_repo_id=payload.repo_name,
                     name=payload.repo_name,
                     default_branch="main",
-                    last_sync_cursor=None,
+                    last_synced_cursor=None,
                     status="active",
                     created_at=now,
                 )

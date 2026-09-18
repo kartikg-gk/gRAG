@@ -21,7 +21,6 @@ from .environment import load_environment
 load_environment()
 
 import os
-import socket
 from pathlib import Path
 
 # --------------------------------------------------------------------------
@@ -767,6 +766,9 @@ ARTIFACT_BACKEND = _env_str("GRAPHRAG_ARTIFACT_BACKEND", "local")
 #: Where the local backend keeps things. Created on demand.
 ARTIFACT_ROOT = _env_str("GRAPHRAG_ARTIFACT_ROOT", "artifacts")
 
+#: Prefix used for artifact object keys in both storage backends.
+ARTIFACT_PREFIX = _env_str("GRAPHRAG_ARTIFACT_S3_PREFIX", "artifacts")
+
 #: Bucket for the cloud backend. **No default** — a default bucket name is a
 #: default destination for somebody else's data.
 ARTIFACT_BUCKET = _env_str("GRAPHRAG_ARTIFACT_BUCKET")
@@ -782,11 +784,9 @@ POD_CACHE_ROOT = _env_str("GRAPHRAG_POD_CACHE_ROOT", "cache")
 
 #: Which serving process this is.
 #:
-#: Defaults to the machine's name, which is right for one process per machine
-#: and wrong the moment there are two — the cache is keyed by this, and two
-#: processes sharing an identifier would write each other's files. Set it
-#: explicitly wherever more than one runs.
-POD_ID = _env_str("GRAPHRAG_POD_ID", "") or socket.gethostname()
+#: The local development identity. Deployments set this explicitly so two
+#: processes never share the cache key represented by this value.
+POD_ID = _env_str("GRAPHRAG_POD_ID", "pod-local")
 
 #: Where other processes would reach this one.
 #:

@@ -63,6 +63,7 @@ from ..models.control_plane import (
     JOB_REGISTERED,
     JOB_UPLOADING,
     GraphArtifact,
+    IngestJob,
     Organization,
     Repository,
 )
@@ -94,7 +95,7 @@ class CompileSummary:
     entities: int
     edges: int
     items: int
-    uri: Optional[str] = None
+    s3_uri: Optional[str] = None
     skipped: bool = False
 
 
@@ -130,11 +131,12 @@ def run_phases(
             org_id=org_id,
             repo_id=repository.repo_id,
             repo_name=repository.name,
-            cursor=repository.last_sync_cursor,
+            cursor=repository.last_synced_cursor,
             db=db,
-            token=None,
+            token=repository.get_github_token(),
         )
-        cursors[repository.repo_id] = result.cursor
+        if result.cursor is not None and result.cursor != repository.last_synced_cursor:
+            cursors[repository.repo_id] = result.cursor
         items += result.items
 
     if items == 0:
@@ -167,7 +169,7 @@ def run_phases(
     # the uniqueness constraint on organisation-and-version refuses the
     # second. The arithmetic is the common path, not the guarantee.
     version = next_version(db, org_id)
-    build_path = Path(build_root) / org_id / f"{version}.db"
+    build_path = Path(build_root) / org_id / f"v{version}.lbug"
     built = compile_to(org_id, db, build_path)
 
     # -- upload ------------------------------------------------------------
@@ -176,28 +178,26 @@ def run_phases(
     key = artifact_key(org_id, str(version))
     digest = checksum(built.path)
     size = built.path.stat().st_size
-    uri = upload(built.path, key)
+    s3_uri = upload(built.path, key)
 
     # -- register, and flip ------------------------------------------------
-    set_job_status(db, job_id, JOB_REGISTERED)
-
     artifact = GraphArtifact(
         artifact_id=_new_artifact_id(),
         org_id=org_id,
         version=version,
-        uri=uri,
-        checksum=digest,
+        s3_uri=s3_uri,
+        checksum_sha256=digest,
         size_bytes=size,
         entity_count=built.entities,
         status=ARTIFACT_READY,
-        job_id=job_id,
+        built_by_job_id=job_id,
         created_at=moment,
     )
     db.add(artifact)
     db.flush()
 
     organization = db.get(Organization, org_id)
-    previous_id = organization.active_artifact_id if organization else None
+    previous_id = organization.desired_artifact_id if organization else None
     if previous_id is not None:
         previous = db.get(GraphArtifact, previous_id)
         # Only what is still in service. Something already superseded or
@@ -207,13 +207,19 @@ def run_phases(
             previous.status = ARTIFACT_SUPERSEDED
 
     if organization is not None:
-        organization.active_artifact_id = artifact.artifact_id
+        organization.desired_artifact_id = artifact.artifact_id
         organization.updated_at = moment
+
+    job = db.get(IngestJob, job_id)
+    if job is not None:
+        job.status = JOB_REGISTERED
+        job.produced_artifact_id = artifact.artifact_id
+        job.cursor_to = max(cursors.values()) if cursors else None
 
     for repository in repositories:
         moved = cursors.get(repository.repo_id)
         if moved is not None:
-            repository.last_sync_cursor = moved
+            repository.last_synced_cursor = moved
             repository.last_synced_at = moment
 
     # Everything above, or nothing. A partial publish is either an artifact
@@ -235,7 +241,7 @@ def run_phases(
         entities=built.entities,
         edges=built.edges,
         items=items,
-        uri=uri,
+        s3_uri=s3_uri,
     )
 
 
