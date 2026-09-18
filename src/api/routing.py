@@ -47,7 +47,7 @@ from . import auth as auth_module
 logger = logging.getLogger("graphrag.api.routing")
 
 #: The routes that read a tenant's graph. Everything else passes untouched.
-TENANT_SCOPED_PREFIXES = ("/query", "/subgraph", "/suggestions")
+TENANT_SCOPED_PREFIXES = ("/api/trace", "/api/subgraph", "/api/suggestions")
 
 READY_HERE = "ready_here"
 PULLING_HERE = "pulling_here"

@@ -63,7 +63,7 @@ from . import auth as auth_module
 
 logger = logging.getLogger("graphrag.api.onboarding")
 
-router = APIRouter()
+router = APIRouter(prefix="/api/admin/onboarding")
 
 #: Shown with every successful response, because the key beside it cannot be
 #: recovered from anything that is stored.
@@ -116,7 +116,7 @@ def require_admin(x_admin_secret: str | None = Header(default=None)) -> None:
 
 
 @router.post(
-    "/admin/onboarding/provision",
+    "/provision",
     response_model=ProvisionResponse,
     dependencies=[Depends(require_admin)],
 )

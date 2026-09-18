@@ -46,7 +46,7 @@ from . import auth as auth_module
 
 logger = logging.getLogger("graphrag.api.webhooks")
 
-router = APIRouter()
+router = APIRouter(prefix="/api/webhooks")
 
 SIGNATURE_HEADER = "X-Hub-Signature-256"
 EVENT_HEADER = "X-GitHub-Event"
@@ -105,7 +105,7 @@ def _arm(org_id: str) -> None:
         logger.warning("%s: a webhook could not arm a rebuild", org_id, exc_info=True)
 
 
-@router.post("/webhooks/github")
+@router.post("/github")
 async def github_webhook(request: Request, background: BackgroundTasks) -> dict:
     """Verify a delivery, then arm every tenant tracking its repository."""
     secret = GITHUB_WEBHOOK_SECRET

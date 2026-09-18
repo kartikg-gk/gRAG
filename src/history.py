@@ -32,10 +32,9 @@ see their sessions and got an empty list would believe they had none.
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -43,8 +42,8 @@ from sqlmodel import Session, select
 
 from .models.history import (
     DEFAULT_SESSION_TITLE,
-    QuerySession,
-    QueryTrace,
+    ChatSession,
+    TraceLog,
     User,
     create_history_engine,
     create_history_schema,
@@ -54,9 +53,9 @@ from .models.history import (
 logger = logging.getLogger("graphrag.history")
 
 #: The domain a made-up address is built under when a real one cannot be
-#: used. Reserved for exactly this purpose and never deliverable, which is
-#: the point: it is a placeholder, not a way to reach anybody.
-PLACEHOLDER_DOMAIN = "users.invalid"
+#: used. Never deliverable, which is the point: it is a placeholder, not a way
+#: to reach anybody.
+PLACEHOLDER_DOMAIN = "users.graphrag.local"
 
 
 class SessionNotAvailable(RuntimeError):
@@ -69,24 +68,25 @@ class SessionNotAvailable(RuntimeError):
 
 
 @dataclass(frozen=True)
-class SessionSummary:
-    """One session, as a caller sees it."""
+class SessionRecord:
+    """One session, as its owner sees it."""
 
-    session_id: str
+    id: str
+    user_id: str
     title: str
-    created_at: int
+    created_at: datetime
 
 
 @dataclass(frozen=True)
 class TraceRecord:
     """One recorded question and what answering it involved."""
 
-    trace_id: str
+    id: str
     session_id: str
     query: str
-    plan: Optional[dict[str, Any]]
-    result: Optional[dict[str, Any]]
-    created_at: int
+    execution_plan: dict[str, Any]
+    graph_payload: Any
+    created_at: datetime
 
 
 # --------------------------------------------------------------------------
@@ -103,31 +103,29 @@ def ensure_user(db: Session, user_id: str, email: str | None = None) -> User:
     either direction is worse than not answering: refusing would block a
     session over an email, and merging would hand one person another's
     history. So the second identifier gets a placeholder address instead,
-    which nothing sends mail to and nobody sees.
+    which nothing sends mail to and nobody sees. No address at all gets the
+    placeholder too.
     """
-    existing = db.get(User, user_id)
-    if existing is not None:
-        return existing
+    user = db.get(User, user_id)
+    if user is not None:
+        return user
 
-    address = email or _placeholder_email(user_id)
-    taken = db.exec(select(User).where(User.email == address)).first()
-    if taken is not None and taken.user_id != user_id:
+    placeholder = f"{user_id}@{PLACEHOLDER_DOMAIN}"
+    candidate = email or placeholder
+    clash = db.exec(select(User).where(User.email == candidate)).first()
+    if clash is not None and clash.id != user_id:
         logger.warning(
             "%s claims an address already held by %s; using a placeholder",
             user_id,
-            taken.user_id,
+            clash.id,
         )
-        address = _placeholder_email(user_id)
+        candidate = placeholder
 
-    user = User(user_id=user_id, email=address, created_at=_now())
+    user = User(id=user_id, email=candidate)
     db.add(user)
-    db.commit()
+    # Surfaces any remaining uniqueness conflict here rather than at commit.
+    db.flush()
     return user
-
-
-def _placeholder_email(user_id: str) -> str:
-    """An address derived from the identifier. Never user-facing."""
-    return f"{user_id}@{PLACEHOLDER_DOMAIN}"
 
 
 # --------------------------------------------------------------------------
@@ -137,53 +135,44 @@ def _placeholder_email(user_id: str) -> str:
 
 def create_or_rename_session(
     user_id: str,
-    title: str | None = None,
+    title: str = DEFAULT_SESSION_TITLE,
     *,
     session_id: str | None = None,
     email: str | None = None,
     engine: Engine | None = None,
-) -> SessionSummary:
+) -> SessionRecord:
     """Start a session, or retitle one this caller already owns."""
     made = engine if engine is not None else create_history_engine()
     sessions = history_sessions(made)
 
     with sessions() as db:
-        if session_id is None:
+        if session_id:
+            session = _owned(db, session_id, user_id)
+            session.title = title
+        else:
             # The user row is created here rather than anywhere earlier
             # because this is the first moment anything needs one to exist.
             ensure_user(db, user_id, email)
-            session = QuerySession(
-                session_id=uuid.uuid4().hex,
-                user_id=user_id,
-                title=title or DEFAULT_SESSION_TITLE,
-                created_at=_now(),
-            )
+            session = ChatSession(user_id=user_id, title=title)
             db.add(session)
-            db.commit()
-            return _summary(session)
-
-        session = _owned(db, session_id, user_id)
-        if title:
-            session.title = title
-            db.commit()
-        return _summary(session)
+        db.commit()
+        db.refresh(session)
+        return _session_record(session)
 
 
-def list_sessions(
-    user_id: str, *, engine: Engine | None = None
-) -> list[SessionSummary]:
+def list_sessions(user_id: str, *, engine: Engine | None = None) -> list[SessionRecord]:
     """This caller's sessions, most recent first."""
     made = engine if engine is not None else create_history_engine()
     sessions = history_sessions(made)
 
     with sessions() as db:
         rows = db.exec(
-            select(QuerySession)
-            .where(QuerySession.user_id == user_id)
-            .order_by(QuerySession.created_at.desc(), QuerySession.session_id.desc())
+            select(ChatSession)
+            .where(ChatSession.user_id == user_id)
+            .order_by(ChatSession.created_at.desc())
         ).all()
 
-    return [_summary(row) for row in rows]
+    return [_session_record(row) for row in rows]
 
 
 def list_traces(
@@ -202,28 +191,28 @@ def list_traces(
         _owned(db, session_id, user_id)
 
         rows = db.exec(
-            select(QueryTrace)
-            .where(QueryTrace.session_id == session_id)
-            .order_by(QueryTrace.created_at, QueryTrace.trace_id)
+            select(TraceLog)
+            .where(TraceLog.session_id == session_id)
+            .order_by(TraceLog.created_at.asc())
         ).all()
 
     return [
         TraceRecord(
-            trace_id=row.trace_id,
+            id=row.id,
             session_id=row.session_id,
             query=row.query,
-            plan=row.plan,
-            result=row.result,
+            execution_plan=row.execution_plan,
+            graph_payload=row.graph_payload,
             created_at=row.created_at,
         )
         for row in rows
     ]
 
 
-def _owned(db: Session, session_id: str, user_id: str) -> QuerySession:
+def _owned(db: Session, session_id: str, user_id: str) -> ChatSession:
     """The session, if this caller owns it. Otherwise the same refusal either
     way — see ``SessionNotAvailable``."""
-    session = db.get(QuerySession, session_id)
+    session = db.get(ChatSession, session_id)
     if session is None or session.user_id != user_id:
         raise SessionNotAvailable(session_id)
     return session
@@ -237,7 +226,7 @@ def _owned(db: Session, session_id: str, user_id: str) -> QuerySession:
 def session_owner(session_id: str, *, engine: Engine | None = None) -> str | None:
     """Who owns ``session_id``, or ``None``.
 
-    ``None`` covers three things that the caller treats identically: no such
+    ``None`` covers two things that the caller treats identically: no such
     session, and a history database that could not be reached. Nothing here
     raises, because this sits in front of answering a question and a history
     database being down is not the asker's problem.
@@ -245,19 +234,19 @@ def session_owner(session_id: str, *, engine: Engine | None = None) -> str | Non
     try:
         made = engine if engine is not None else create_history_engine()
         with history_sessions(made)() as db:
-            session = db.get(QuerySession, session_id)
+            session = db.get(ChatSession, session_id)
             return session.user_id if session is not None else None
     except Exception:  # noqa: BLE001 - history must not break a query
         logger.warning("could not read the owner of session %s", session_id, exc_info=True)
         return None
 
 
-def record_trace(
+def persist_trace(
     session_id: str,
     query: str,
+    execution_plan: dict[str, Any],
+    graph_payload: Any,
     *,
-    plan: dict[str, Any] | None = None,
-    result: dict[str, Any] | None = None,
     engine: Engine | None = None,
 ) -> str | None:
     """Write one trace. Returns its identifier, or ``None`` if it was lost.
@@ -269,17 +258,15 @@ def record_trace(
     try:
         made = engine if engine is not None else create_history_engine()
         with history_sessions(made)() as db:
-            trace = QueryTrace(
-                trace_id=uuid.uuid4().hex,
+            trace = TraceLog(
                 session_id=session_id,
                 query=query,
-                plan=plan,
-                result=result,
-                created_at=_now(),
+                execution_plan=execution_plan,
+                graph_payload=graph_payload,
             )
             db.add(trace)
             db.commit()
-            return trace.trace_id
+            return trace.id
     except Exception:  # noqa: BLE001 - history must not break a query
         logger.warning("could not record a trace for %s", session_id, exc_info=True)
         return None
@@ -291,8 +278,7 @@ def record_trace(
 
 
 def initialize(engine: Engine | None = None) -> Engine:
-    """Create the history tables. Not called at startup — see the API layer,
-    which reaches this store only when a caller names a session."""
+    """Create the history tables."""
     made = engine if engine is not None else create_history_engine()
     try:
         create_history_schema(made)
@@ -301,13 +287,10 @@ def initialize(engine: Engine | None = None) -> Engine:
     return made
 
 
-def _summary(session: QuerySession) -> SessionSummary:
-    return SessionSummary(
-        session_id=session.session_id,
+def _session_record(session: ChatSession) -> SessionRecord:
+    return SessionRecord(
+        id=session.id,
+        user_id=session.user_id,
         title=session.title,
         created_at=session.created_at,
     )
-
-
-def _now() -> int:
-    return int(datetime.now(timezone.utc).timestamp())

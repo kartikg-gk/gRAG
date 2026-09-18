@@ -14,7 +14,7 @@ requires-python = ">=3.12"
 # readme is dropped silently rather than raising.
 readme = "README.md"
 
-# Runtime dependencies. Eight, and each earns its place:
+# Runtime dependencies. Nine, and each earns its place:
 #
 #   httpx      — src/ingestion/github.py. The GitHub REST client. Chosen over
 #                urllib for connection reuse across the hundreds of per-pull-
@@ -51,6 +51,8 @@ readme = "README.md"
 #                reads its settings at import, so without it a value written
 #                only to the file is absent, and absent fails by defaulting
 #                rather than by raising.
+#   slowapi    — src/api/ratelimit.py. The per-user limit on the routes that
+#                call a paid model, counted in memory per process.
 #
 # The database and queue clients are the reason the runtime set is no longer
 # small enough to be pinned by a test. That pin is gone; see the note in
@@ -68,6 +70,7 @@ dependencies = [
     "celery[redis]>=5.4,<6",
     "redis>=5,<7",
     "python-dotenv>=1.0,<2",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -80,6 +83,10 @@ adapter = ["langchain-core>=1.5,<2"]
 # and callback propagation are exercised rather than asserted. Nothing in the
 # library imports this.
 examples = ["langgraph>=1.2,<2"]
+
+# Error reporting, switched on only when GRAPHRAG_SENTRY_DSN is set. Nothing
+# imports it otherwise.
+sentry = ["sentry-sdk[fastapi]>=2.0.0"]
 
 # The statistical half of entity extraction. Optional because the rule stage —
 # ticket references, pull request references, service names — is stdlib-only

@@ -3,7 +3,7 @@
 Two dependencies, two credentials, two stores, and no path between them.
 
     Authorization: Bearer <session JWT>   ->  get_current_user      -> user_id
-    X-API-Key: <api key>                  ->  get_current_tenant_org -> org_id
+    Authorization: Bearer <api key>       ->  get_current_tenant_org -> org_id
 
 A verified user id never implies an organisation and an organisation never
 implies a user. That is the whole point: the first says a person is who they
@@ -11,19 +11,12 @@ claim to be, the second says a request is entitled to a particular tenant's
 data. A system that derives one from the other has one check wearing two hats,
 and the day the hats disagree is a cross-tenant read.
 
-Why the API key is not in the Authorization header
---------------------------------------------------
+Both credentials travel as a bearer token
+-----------------------------------------
 
-Both credentials want to be a bearer token, and a request carries one
-``Authorization`` header. A route asking for both — which is the normal case —
-would have to guess which credential it received and try the other on failure,
-and "try it as a session token, then as an API key" is a downgrade attack
-waiting for a token that parses as both.
-
-So the key has its own header. ``Authorization: Bearer <key>`` is still
-accepted for it, but **only when session verification is off**, where nothing
-else is competing for the header — that keeps the single-credential
-development setup working without creating the ambiguity in the deployed one.
+The session token and the API key each arrive as ``Authorization: Bearer``.
+Each dependency reads the header for its own credential; neither falls back to
+trying the other's.
 
 Failures
 --------
@@ -91,8 +84,6 @@ LEEWAY_SECONDS = 5
 #: The warning has to be impossible to miss and impossible to drown in, and
 #: those pull opposite ways at one line per request.
 _unconfigured_warning_emitted = False
-
-API_KEY_HEADER = "X-API-Key"
 
 _jwks_lock = threading.Lock()
 _jwks_clients: dict[str, Any] = {}
@@ -186,15 +177,8 @@ def bearer_token(request: Request) -> str | None:
 
 
 def api_key_from(request: Request) -> str | None:
-    """The API key, from its own header or — only in single-credential mode —
-    from ``Authorization``. See the module docstring for why that is
-    conditional."""
-    key = request.headers.get(API_KEY_HEADER)
-    if key and key.strip():
-        return key.strip()
-    if not CLERK_ENABLED:
-        return bearer_token(request)
-    return None
+    """The API key, from ``Authorization: Bearer <key>``, or ``None``."""
+    return bearer_token(request)
 
 
 # --------------------------------------------------------------------------
@@ -318,18 +302,6 @@ async def get_current_user(request: Request) -> str:
     user it is not.
     """
     if not CLERK_ENABLED:
-        # Loud on every request, deliberately. A single startup line scrolls
-        # away; this cannot be mistaken for an authenticated deployment while
-        # reading a log.
-        logger.warning(
-            "session verification is DISABLED: request runs as %s and no token "
-            "was checked",
-            DEV_USER_ID,
-        )
-        request.state.user_id = DEV_USER_ID
-        return DEV_USER_ID
-
-    if not CLERK_ISSUER:
         # **A deliberate change of posture, not a bug fix.** This used to
         # refuse to verify against a trust anchor nobody configured, and fail
         # closed. It now skips verification entirely and runs as the
@@ -450,7 +422,6 @@ async def get_current_tenant_org(request: Request):
 
 
 __all__ = [
-    "API_KEY_HEADER",
     "Depends",
     "api_key_from",
     "bearer_token",

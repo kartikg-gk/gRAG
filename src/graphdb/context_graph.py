@@ -50,6 +50,7 @@ from ..common.config import (
     POOL_TIMEOUT_SECONDS,
     READ_POOL_SIZE,
     REL_TABLE,
+    RELATION_CO_OCCURS,
     VECTOR_INDEX_NAME,
     VECTOR_METRIC,
 )
@@ -661,6 +662,9 @@ class ContextGraph:
         A requested node with no neighbours still appears. Returning only nodes
         that happen to have edges would silently drop exactly the isolated
         entities a caller most needs to see.
+
+        Edges run strictly between visible nodes, in their stored direction.
+        One with no recorded relation is reported as the generic one.
         """
         wanted = list(dict.fromkeys(entity_ids))
         if not wanted:
@@ -669,40 +673,43 @@ class ContextGraph:
         requested_rows = self.query(
             f"UNWIND $ids AS wanted "
             f"MATCH (e:{NODE_TABLE} {{id: wanted}}) "
-            f"RETURN e.id, e.label, e.type, e.ts ORDER BY e.id",
+            f"RETURN e.id, e.label, e.type ORDER BY e.id",
             {"ids": wanted},
         )
         neighbor_rows = self.query(
             f"UNWIND $ids AS wanted "
             f"MATCH (a:{NODE_TABLE} {{id: wanted}})-[:{REL_TABLE}]-(b:{NODE_TABLE}) "
-            f"RETURN DISTINCT b.id, b.label, b.type, b.ts ORDER BY b.id",
+            f"RETURN DISTINCT b.id, b.label, b.type ORDER BY b.id",
             {"ids": wanted},
         )
 
+        requested = set(wanted)
         nodes: dict[str, dict[str, Any]] = {}
-        for row in requested_rows:
-            nodes[row[0]] = {**_entity(row), "requested": True}
-        for row in neighbor_rows:
-            if row[0] not in nodes:
-                nodes[row[0]] = {**_entity(row), "requested": False}
+        for node_id, label, node_type in [*requested_rows, *neighbor_rows]:
+            if node_id not in nodes:
+                nodes[node_id] = {
+                    "id": node_id,
+                    "label": label,
+                    "type": node_type,
+                    "requested": node_id in requested,
+                }
 
         visible = list(nodes)
         edge_rows = self.query(
             f"MATCH (a:{NODE_TABLE})-[r:{REL_TABLE}]->(b:{NODE_TABLE}) "
             f"WHERE list_contains($visible, a.id) AND list_contains($visible, b.id) "
-            f"RETURN a.id, b.id, r.relation, r.confidence, r.ts "
+            f"RETURN a.id, b.id, r.confidence, r.relation "
             f"ORDER BY a.id, b.id",
             {"visible": visible},
         )
         edges = [
             {
-                "source": row[0],
-                "target": row[1],
-                "relation": row[2],
-                "confidence": row[3],
-                "timestamp": _moment(row[4]),
+                "source": source,
+                "target": target,
+                "confidence": confidence,
+                "relation": relation or RELATION_CO_OCCURS,
             }
-            for row in edge_rows
+            for source, target, confidence, relation in edge_rows
         ]
 
         return {"nodes": list(nodes.values()), "edges": edges}
@@ -717,12 +724,13 @@ class ContextGraph:
         rows = self.query(f"MATCH (d:{DOC_TABLE}) RETURN count(*)")
         return int(rows[0][0]) if rows else 0
 
-    def most_connected(self, limit: int = 10) -> list[dict[str, Any]]:
-        """The hubs, by distinct neighbours rather than by edge rows."""
+    def top_entities(self, limit: int = 12) -> list[dict[str, Any]]:
+        """The hubs: most distinct neighbours first, ties broken by label."""
         rows = self.query(
             f"MATCH (a:{NODE_TABLE})-[:{REL_TABLE}]-(b:{NODE_TABLE}) "
-            f"RETURN a.id, a.label, a.type, count(DISTINCT b.id) AS degree "
-            f"ORDER BY degree DESC, a.id ASC LIMIT $limit",
+            f"WITH a, count(DISTINCT b) AS degree "
+            f"RETURN a.id, a.label, a.type, degree "
+            f"ORDER BY degree DESC, a.label ASC LIMIT $limit",
             {"limit": int(limit)},
         )
         return [
