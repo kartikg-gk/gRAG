@@ -117,6 +117,7 @@ class Engine:
         #: Set once the index has been built in this process. A query consults
         #: it so that forgetting the explicit build is not fatal.
         self._indexed = False
+        self._router = None
         # Opened here, not on entry. A caller in a notebook or a script that
         # runs to completion gets a working object from the constructor, and
         # the context manager becomes optional sugar for closing rather than
@@ -274,6 +275,34 @@ class Engine:
         run = self.retrieve(question, k)
         documents = self.store.documents_for_entities(run.ids)
         return as_prompt(run.hits, documents)
+
+    @property
+    def router(self):
+        """The native retrieval router over this engine's warm dependencies."""
+        if self._router is None:
+            from .retrieval.router import RetrievalRouter
+
+            self._router = RetrievalRouter(
+                self.store,
+                self._embedder(),
+                extractor=self.extractor,
+                judge=self.judge,
+                now=self.now,
+            )
+        return self._router
+
+    def route(self, query: str, top_k: int | None = None):
+        if not self._indexed:
+            self.build_index()
+        return self.router.route(query, top_k)
+
+    async def route_async(self, query: str, top_k: int | None = None):
+        if not self._indexed:
+            self.build_index()
+        return await self.router.aroute(query, top_k)
+
+    def warm(self) -> None:
+        self.router.warm()
 
     # -- internals ---------------------------------------------------------
 

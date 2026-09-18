@@ -131,6 +131,26 @@ def documents_from(run, texts: dict[str, list[dict[str, Any]]] | None = None):
     return documents
 
 
+def routed_documents(response) -> list[Document]:
+    """Convert the native router response using its shared source-text rules."""
+    from .retrieval.response import format_page_content
+
+    seen: set[str] = set()
+    return [
+        Document(
+            page_content=format_page_content(node, seen),
+            metadata={
+                "id": node.id,
+                "score_total": node.score_total,
+                "score_vector": node.score_vector,
+                "score_graph": node.score_graph,
+                "trace_log": response.trace_log,
+            },
+        )
+        for node in response.results
+    ]
+
+
 class GraphRetriever(BaseRetriever):
     """This project's two-arm retrieval, behind the framework's interface.
 
@@ -173,6 +193,8 @@ class GraphRetriever(BaseRetriever):
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
     ) -> list[Document]:
+        if hasattr(self.engine, "route"):
+            return routed_documents(self.engine.route(query, self.k))
         run = self.engine.retrieve(query, self.k)
         return documents_from(run, self._texts_for(run))
 
@@ -186,5 +208,7 @@ class GraphRetriever(BaseRetriever):
         second arrangement. Nothing here adds a timeout or a retry: what the
         wrapped call has an opinion about is the opinion that holds.
         """
+        if hasattr(self.engine, "route_async"):
+            return routed_documents(await self.engine.route_async(query, self.k))
         run = await self.engine.retrieve_async(query, self.k)
         return documents_from(run, self._texts_for(run))
