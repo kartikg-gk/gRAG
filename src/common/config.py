@@ -21,6 +21,7 @@ from .environment import load_environment
 load_environment()
 
 import socket
+from pathlib import Path
 
 # --------------------------------------------------------------------------
 # Node labels
@@ -543,18 +544,20 @@ ENDPOINT_GENERAL = "general"
 # looks authenticated and is not.
 # --------------------------------------------------------------------------
 
-#: Whether session tokens are verified. **Off is a development mode**, and the
-#: dependency logs a warning on every request it lets through unverified, so a
-#: process running this way cannot be mistaken for one that is not.
-CLERK_ENABLED = _env_int("GRAPHRAG_CLERK_ENABLED", 1) == 1
-
-#: Who must have issued the token. **No default**, for the same reason the
-#: judge models have none: a default issuer is a trust decision nobody made.
-#: With verification on and this unset, the dependency refuses to build.
+#: Who must have issued the token. **No default**: a default issuer is a trust
+#: decision nobody made.
 CLERK_ISSUER = _env_str("GRAPHRAG_CLERK_ISSUER")
 
-#: Where the issuer publishes its public signing keys. **No default.**
-CLERK_JWKS_URL = _env_str("GRAPHRAG_CLERK_JWKS_URL")
+#: Where the issuer publishes its public signing keys. Unset, the issuer's
+#: standard well-known location.
+CLERK_JWKS_URL = _env_str("GRAPHRAG_CLERK_JWKS_URL") or (
+    f"{CLERK_ISSUER.rstrip('/')}/.well-known/jwks.json" if CLERK_ISSUER else ""
+)
+
+#: Whether session tokens are verified: exactly when an issuer is configured.
+#: Without one every request runs as the development user, and the dependency
+#: says so in the log.
+CLERK_ENABLED = bool(CLERK_ISSUER)
 
 #: Which authorized parties may present a token, as a comma-separated list.
 #: Empty means the ``azp`` claim is not checked — an allow-list of nothing
@@ -583,7 +586,7 @@ CLERK_ALGORITHM = "RS256"
 #: The user id requests run as when verification is off. The value says what
 #: it is, so it is recognisable anywhere it surfaces — a log line, a stored
 #: record, a bug report — as an unauthenticated request rather than a person.
-DEV_USER_ID = _env_str("GRAPHRAG_DEV_USER_ID", "dev-user-AUTHENTICATION-DISABLED")
+DEV_USER_ID = _env_str("GRAPHRAG_DEV_USER_ID", "dev-user")
 
 #: The exact values of GRAPHRAG_MULTI_TENANCY_ENABLED that turn tenancy on.
 #: Compared as written: no trimming and no case folding.
@@ -703,10 +706,12 @@ DOCUMENT_CHUNK_OVERLAP_WORDS = 15
 # have.
 # --------------------------------------------------------------------------
 
-#: Where the served graph lives. The same default the CLI writes to, so a
-#: store built by an ingest is the one a server started in the same directory
-#: will open.
-STORE_PATH = _env_str("GRAPHRAG_STORE_PATH", "graph.db")
+#: The project root: the directory holding ``src/``.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+#: Where the served graph lives: ``graph.lbug`` in the project root unless
+#: the environment names another file.
+STORE_PATH = _env_str("GRAPHRAG_STORE_PATH", str(PROJECT_ROOT / "graph.lbug"))
 
 #: Whether to embed a throwaway string at startup.
 #:
@@ -787,3 +792,17 @@ RECONCILE_INTERVAL_SECONDS = _env_float("GRAPHRAG_RECONCILE_INTERVAL", 5.0)
 #: property of the deployment's interval and its tolerance for placing a
 #: tenant on something that has just died.
 POD_HEARTBEAT_WINDOW_SECONDS = _env_float("GRAPHRAG_POD_HEARTBEAT_WINDOW", 120.0)
+
+
+# --------------------------------------------------------------------------
+# Error reporting, opt in
+# --------------------------------------------------------------------------
+
+#: Where errors are reported. Unset, nothing is reported and nothing is loaded.
+SENTRY_DSN = _env_str("GRAPHRAG_SENTRY_DSN")
+
+#: The environment name errors are filed under.
+SENTRY_ENVIRONMENT = _env_str("GRAPHRAG_SENTRY_ENVIRONMENT", "development")
+
+#: The share of requests traced for performance.
+SENTRY_TRACES_SAMPLE_RATE = _env_float("GRAPHRAG_SENTRY_TRACES_SAMPLE_RATE", 1.0)

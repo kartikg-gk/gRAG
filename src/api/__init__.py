@@ -23,7 +23,6 @@ the token library out of the runtime dependency list.
 """
 
 from .auth import (
-    API_KEY_HEADER,
     get_current_tenant_org,
     get_current_user,
     reset_jwks_cache,
@@ -49,7 +48,6 @@ from .tenancy import (
 )
 
 __all__ = [
-    "API_KEY_HEADER",
     "ApiKeyRecord",
     "ControlPlane",
     "ControlPlaneError",

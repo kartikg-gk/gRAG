@@ -34,9 +34,10 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any
 
-from sqlalchemy import JSON, Column, Engine, Index, Text, create_engine, event
+from sqlalchemy import JSON, Column, Engine, create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Field, Session, SQLModel
 
@@ -50,11 +51,19 @@ from .database import DATABASE_URL_VARIABLE, as_url
 HISTORY_URL_VARIABLE = "GRAPHRAG_HISTORY_DATABASE_URL"
 
 #: What a session is called when nobody names it.
-DEFAULT_SESSION_TITLE = "New session"
+DEFAULT_SESSION_TITLE = "New Chat"
 
 
 class HistoryNotConfigured(RuntimeError):
     """Neither environment variable names a database for history."""
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _new_id() -> str:
+    return str(uuid.uuid4())
 
 
 class User(SQLModel, table=True):
@@ -66,59 +75,32 @@ class User(SQLModel, table=True):
     announce what has already been proved.
     """
 
-    __tablename__ = "history_users"
-
-    user_id: str = Field(primary_key=True)
-    #: Unique, because two identifiers claiming one address is a question
-    #: about identity that this table cannot answer — see ``ensure_user``,
-    #: which declines to answer it and moves on.
+    id: str = Field(primary_key=True)
     email: str = Field(unique=True, index=True)
-    created_at: int
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
-class QuerySession(SQLModel, table=True):
+class ChatSession(SQLModel, table=True):
     """A named run of questions, belonging to exactly one person."""
 
-    __tablename__ = "history_sessions"
-    __table_args__ = (
-        # Listing is always "this person's sessions, newest first", so the
-        # index leads with the owner and carries the ordering.
-        Index("history_sessions_user_created", "user_id", "created_at"),
-    )
-
-    session_id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex, primary_key=True
-    )
-    user_id: str = Field(foreign_key="history_users.user_id", index=True)
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    user_id: str = Field(foreign_key="user.id", index=True)
     title: str = Field(default=DEFAULT_SESSION_TITLE)
-    created_at: int
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
-class QueryTrace(SQLModel, table=True):
+class TraceLog(SQLModel, table=True):
     """One question asked in a session, and what answering it involved."""
 
-    __tablename__ = "history_traces"
-    __table_args__ = (
-        Index("history_traces_session_created", "session_id", "created_at"),
-    )
-
-    trace_id: str = Field(default_factory=lambda: uuid.uuid4().hex, primary_key=True)
-    session_id: str = Field(foreign_key="history_sessions.session_id", index=True)
-    query: str = Field(sa_column=Column(Text, nullable=False))
-
-    #: How the answer was arrived at, and what it was. Both open-ended: see
-    #: the module docstring.
-    plan: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
-    )
-    result: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSON, nullable=True)
-    )
-    created_at: int
+    id: str = Field(default_factory=_new_id, primary_key=True)
+    session_id: str = Field(foreign_key="chatsession.id", index=True)
+    query: str
+    execution_plan: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    graph_payload: Any = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
-#: Exactly the tables this concern owns.
-HISTORY_MODELS = (User, QuerySession, QueryTrace)
+HISTORY_MODELS = (User, ChatSession, TraceLog)
 HISTORY_TABLES = tuple(model.__table__ for model in HISTORY_MODELS)
 
 

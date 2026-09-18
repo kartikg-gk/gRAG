@@ -8,7 +8,7 @@ without any opinion about what a label looks like.
 Neither opens anything, and neither imports the engine or the store.
 
 **A store here is a single file, not a directory.** Checked rather than
-assumed: opening one at ``sample.db`` leaves exactly that file beside its
+assumed: opening one at ``sample.lbug`` leaves exactly that file beside its
 siblings, with nothing inside it. So enumeration is a glob, which is the
 simple case — a directory-per-store would have needed a test for "is this a
 store or just a folder" that a glob does not.
@@ -38,7 +38,7 @@ from .common.config import STORE_PATH
 GRAPHS_DIRECTORY = Path(__file__).resolve().parents[1] / "graphs"
 
 #: What a store looks like on disk. One file, verified rather than assumed.
-STORE_PATTERN = "*.db"
+STORE_PATTERN = "*.lbug"
 
 #: Appended to the label of whichever file is the configured default, so a
 #: reader can tell at a glance which one that is without comparing paths.
@@ -46,7 +46,7 @@ DEFAULT_MARKER = " (default)"
 
 #: A filename cannot hold a forward slash, so a repository name is written
 #: with a doubled underscore and read back with a slash. That lets
-#: ``owner__repository.db`` round-trip to ``owner/repository``.
+#: ``owner__repository.lbug`` round-trip to ``owner/repository``.
 NAME_SEPARATOR = "__"
 
 

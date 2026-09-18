@@ -5,8 +5,7 @@ solved behind the facade, so this layer does three things and nothing else:
 establish who is asking and which tenant they may read, hand the query to the
 facade, and shape the result into a declared contract.
 
-Everything it serves was computed by the module that already computed it. No
-route re-scores, re-ranks, re-queries or paraphrases anything.
+Every route lives under ``/api``.
 
 One store, opened once
 ----------------------
@@ -42,13 +41,13 @@ Everything the agent needs is imported **inside** that gate, so a process
 running without it neither pays for those imports nor fails to start because
 something on that path is unavailable.
 
-Failures are statuses, not empty sets
--------------------------------------
+The model routes
+----------------
 
-A query that cannot run returns 5xx. It does not return an empty result list,
-because "the graph holds nothing matching this" and "the graph could not be
-read" are different facts and a caller that cannot tell them apart will
-report the first while the second is happening.
+Summaries and answers call the general judge client. They are limited per user
+and cached, and a failure — including a client that is not configured — comes
+back in the response body rather than as an error status, because the caller
+has already been shown the trace and an absent summary is not a failed page.
 """
 
 from __future__ import annotations
@@ -57,41 +56,44 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
+from ..cache import LRUCache
 from ..common.config import (
     CORS_ORIGINS,
     DEFAULT_TENANT_ORG_ID,
     POD_ID,
+    SENTRY_DSN,
+    SENTRY_ENVIRONMENT,
+    SENTRY_TRACES_SAMPLE_RATE,
     STORE_PATH,
+    TOP_K_VECTOR,
     WARM_EMBEDDER_ON_STARTUP,
 )
 from ..graphs import graph_label, graph_paths
 from ..registry import REGISTRY
-from ..results import format_run
-from ..suggestions import OVERFETCH, suggestions_from
+from ..retrieval.response import build_context, format_page_content, routed_response
 from . import auth as auth_module
 from .auth import get_current_tenant_org, get_current_user
 from .history_routes import router as history_router
+from .models import (
+    AnswerRequest,
+    SubgraphRequest,
+    SummarizeRequest,
+    SwitchRequest,
+    TraceRequest,
+)
 from .onboarding import router as onboarding_router
+from .ratelimit import LLM_RATE_LIMIT, limiter
 from .routing import TenantRoutingMiddleware
 from .webhooks import router as webhooks_router
-from .models import (
-    GraphSummary,
-    GraphsResponse,
-    Health,
-    QueryRequest,
-    QueryResponse,
-    SubgraphRequest,
-    SubgraphResponse,
-    Suggestion,
-    SuggestionsResponse,
-    SwitchRequest,
-    SwitchResponse,
-)
 
 logger = logging.getLogger("graphrag.api.app")
 
@@ -105,6 +107,41 @@ WARMUP_TEXT = "warm"
 #: for truth.
 POD_AGENT_VARIABLE = "GRAPHRAG_POD_AGENT"
 POD_AGENT_ENABLED = "1"
+
+#: The version the local default graph is bound under in the registry.
+LOCAL_DEFAULT_VERSION = "0"
+
+#: One-sentence summaries, by key. Emptied when the served graph changes,
+#: because the snippets they summarise belong to the previous one.
+SUMMARY_CACHE: LRUCache[str, str] = LRUCache(capacity=512)
+
+#: Answers, by question and context. Shared by the blocking and the streaming
+#: route, so either one can answer from what the other produced.
+ANSWER_CACHE: LRUCache[str, str] = LRUCache(capacity=512)
+
+SUMMARY_PROMPT = (
+    "Condense this engineering note into a single sentence "
+    "of at most 25 words covering what changed and why. Return only the "
+    "sentence.\n\n"
+)
+
+NO_CONTEXT_ANSWER = "Nothing relevant was retrieved for this question."
+STREAM_FAILED_ANSWER = "The answer could not be produced right now."
+
+#: The question template each hub type is offered with; anything else gets
+#: the default.
+SUGGESTION_TEMPLATES: dict[str, str] = {
+    "Person": "What did {label} work on?",
+    "Team": "What does {label} own?",
+    "Service": "What depends on {label}?",
+    "Library": "What changed in {label}?",
+    "Tool": "What is {label} used for?",
+    "PR": "What is related to {label}?",
+    "Ticket": "What is linked to {label}?",
+}
+SUGGESTION_DEFAULT = "What is related to {label}?"
+
+_llm: dict = {}
 
 
 def pod_agent_enabled() -> bool:
@@ -138,40 +175,32 @@ def _bring_up_the_control_plane() -> None:
         )
 
 
-async def _authorise_session(session_id: str, user_id: str) -> None:
-    """Refuse a session that is not this caller's, before any query runs.
+def _bring_up_history() -> None:
+    """Create the history tables, and keep serving if there is no database."""
+    try:
+        from ..history import initialize
 
-    Imported here rather than at module scope, so a process that never
-    records anything never loads the history layer at all.
-
-    An unreachable history database reads as "not yours" and the query is
-    refused. That is the one place history is allowed to fail a request, and
-    it is deliberate: the alternative is answering into a session whose
-    ownership could not be established, which is the failure this check
-    exists to prevent.
-    """
-    import asyncio
-
-    from ..history import session_owner
-
-    owner = await asyncio.to_thread(session_owner, session_id)
-    if owner != user_id:
-        logger.warning("session %s refused for %s", session_id, user_id)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="no such session",
-        )
+        initialize().dispose()
+    except Exception as exc:  # noqa: BLE001 - the API boots without history
+        logger.warning("history is disabled (%s)", exc)
 
 
-def _record_query(session_id: str, query: str, answer) -> None:
-    """Write the answer into the session. Never raises — see ``record_trace``."""
-    from ..history import record_trace
+def _start_error_reporting() -> None:
+    """Start error reporting when a DSN is configured; otherwise do nothing."""
+    if not SENTRY_DSN:
+        return
+    import sentry_sdk
 
-    record_trace(
-        session_id,
-        query,
-        plan={"intent": answer.intent, "alpha": answer.alpha, "beta": answer.beta},
-        result=answer.model_dump(mode="json"),
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,
+    )
+    logger.info(
+        "error reporting on (environment=%s, traces_sample_rate=%.2f)",
+        SENTRY_ENVIRONMENT,
+        SENTRY_TRACES_SAMPLE_RATE,
     )
 
 
@@ -229,44 +258,231 @@ def engine_for(request: Request, org_id: str):
     request arrived — a graph is servable exactly when something has already
     attached it or pointed a key at a path.
 
-    **The tenant is an argument, not ambient state.** A context variable
-    carrying the current tenant exists and would work, and using it would make
-    this function's result depend on something invisible at the call site.
-    Passing it means a route that forgets to resolve one does not compile
-    rather than quietly serving whatever was last set.
-
     A miss is **service-unavailable, not not-found**. The tenant may well
     exist and be perfectly valid; this process simply does not hold its graph.
-    404 would say the tenant is unknown, which is a claim this layer is in no
-    position to make.
     """
-    # The process's registry, not one hung off this application. There is
-    # one object, and it is the one startup attached the store to.
     engine = REGISTRY.get(org_id)
     if engine is None and not auth_module.MULTI_TENANCY_ENABLED:
-        # Single-tenant operation, unchanged: one store, opened at startup
-        # from the configured path, serving whatever identifier arrives.
+        # Single-tenant operation: one store, opened at startup from the
+        # configured path, serving whatever identifier arrives.
         engine = REGISTRY.get(DEFAULT_TENANT_ORG_ID)
 
     if engine is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="this tenant's graph is not loaded in this process",
+            detail=f"Tenant graph not loaded on this pod: {org_id}",
         )
     return engine
 
 
 def _same_file(left, right) -> bool:
-    """Whether two paths name the same file, comparing resolved forms.
-
-    The same store reached by two spellings is one store, and marking the
-    active graph has to say so or the list shows nothing active while
-    something plainly is.
-    """
+    """Whether two paths name the same file, comparing resolved forms."""
     try:
         return Path(left).resolve() == Path(right).resolve()
     except OSError:
         return Path(left).absolute() == Path(right).absolute()
+
+
+def general_client():
+    """The general judge client and its model, built once.
+
+    Raises when the judge is not configured; each route turns that into its
+    own failure answer.
+    """
+    from ..common.config import JUDGE_MODEL
+    from ..common.judge import _required, chat_client
+
+    if "client" not in _llm:
+        model = _required(JUDGE_MODEL, "GRAPHRAG_JUDGE_MODEL")
+        _llm["client"] = (chat_client(), model)
+    return _llm["client"]
+
+
+def _answer_key(query: str, context: str) -> str:
+    return f"{query}\n#{hash(context)}"
+
+
+def _answer_prompt(query: str, context: str) -> str:
+    """The grounded-answer prompt the blocking and streaming routes share."""
+    return (
+        "Answer a colleague's question about a software "
+        "knowledge graph using ONLY the context below. Reply in two or three "
+        "plain sentences that a non-expert can follow, naming the exact "
+        "PRs, people and components involved. If the context lacks the "
+        "answer, say so plainly instead of guessing.\n\n"
+        f"Question: {query}\n\nContext:\n{context}"
+    )
+
+
+def suggestions_from(hubs, limit: int) -> list[dict]:
+    """Example questions built from the busiest entities.
+
+    Variety comes first: the first entity of each type, in the order the hubs
+    arrive, busiest first. Only when every type has had its turn do further
+    entities fill the remaining places, and a question already on the list is
+    not asked twice.
+    """
+    candidates = []
+    for hub in hubs:
+        label = (hub.get("label") or "").strip()
+        if label:
+            kind = hub.get("type") or ""
+            question = SUGGESTION_TEMPLATES.get(kind, SUGGESTION_DEFAULT).format(label=label)
+            candidates.append({"query": question, "entity": label, "type": kind})
+
+    first_of_type: dict[str, dict] = {}
+    for candidate in candidates:
+        first_of_type.setdefault(candidate["type"], candidate)
+    # At least one pick even for a non-positive limit, as the list has always
+    # been read as "some examples" rather than validated here.
+    picked = list(first_of_type.values())[:max(limit, 1)]
+
+    asked = {candidate["query"] for candidate in picked}
+    for candidate in candidates:
+        if len(picked) >= limit:
+            break
+        if candidate["query"] not in asked:
+            picked.append(candidate)
+            asked.add(candidate["query"])
+    return picked
+
+
+def _complete(prompt: str) -> str:
+    """One deterministic completion from the general model, trimmed."""
+    client, model = general_client()
+    reply = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+    )
+    return (reply.choices[0].message.content or "").strip()
+
+
+def _stream_completion(prompt: str):
+    """The general model's completion, yielded in the pieces it arrives in."""
+    client, model = general_client()
+    chunks = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        stream=True,
+    )
+    for chunk in chunks:
+        try:
+            piece = chunk.choices[0].delta.content or ""
+        except (AttributeError, IndexError):
+            piece = ""
+        if piece:
+            yield piece
+
+
+def _cached_completion(cache, key: str, prompt: str | None, field: str, *, without_prompt: str = "") -> dict:
+    """``{field: text, "cached": ...}`` from ``cache`` or, failing that, the model.
+
+    A ``prompt`` of ``None`` means there is nothing to ask, and the reply is
+    ``without_prompt``. A failed call is reported in the body under ``error``
+    rather than raised, and nothing is remembered for it.
+    """
+    remembered = cache.get(key)
+    if remembered is not None:
+        return {field: remembered, "cached": True}
+    if prompt is None:
+        return {field: without_prompt, "cached": False}
+    try:
+        text = _complete(prompt)
+    except Exception as exc:  # noqa: BLE001 - the caller reads the error field
+        logger.warning("the model gave no %s: %s", field, exc)
+        return {field: "", "cached": False, "error": str(exc)}
+    cache.set(key, text)
+    return {field: text, "cached": False}
+
+
+def _prepared_answer(req) -> tuple[str, str | None, str | None]:
+    """Where an answer to ``req`` will come from.
+
+    ``(cache key, remembered answer or None, prompt or None)``; the prompt is
+    None when there is no context to ground an answer in.
+    """
+    key = _answer_key(req.query, req.context)
+    remembered = ANSWER_CACHE.get(key)
+    context = (req.context or "").strip()
+    return key, remembered, (_answer_prompt(req.query, context) if context else None)
+
+
+# --------------------------------------------------------------------------
+# The model routes. Declared once, at import, because the rate limit is
+# registered when the route is decorated and a route declared per application
+# would register it again for every application built in the process.
+# --------------------------------------------------------------------------
+
+model_router = APIRouter(prefix="/api")
+
+
+@model_router.post("/summarize")
+@limiter.limit(LLM_RATE_LIMIT)
+def summarize(
+    request: Request,
+    req: SummarizeRequest,
+    _user: str = Depends(get_current_user),
+) -> dict:
+    """A one-sentence summary of a note, remembered per key."""
+    key = req.key or req.text[:64]
+    text = (req.text or "").strip()
+    return _cached_completion(SUMMARY_CACHE, key, SUMMARY_PROMPT + text if text else None, "summary")
+
+
+@model_router.post("/answer")
+@limiter.limit(LLM_RATE_LIMIT)
+def answer(
+    request: Request,
+    req: AnswerRequest,
+    _user: str = Depends(get_current_user),
+) -> dict:
+    """A short plain-language answer drawn only from the supplied context."""
+    context = (req.context or "").strip()
+    return _cached_completion(
+        ANSWER_CACHE,
+        _answer_key(req.query, req.context),
+        _answer_prompt(req.query, context) if context else None,
+        "answer",
+        without_prompt=NO_CONTEXT_ANSWER,
+    )
+
+
+@model_router.post("/answer/stream")
+@limiter.limit(LLM_RATE_LIMIT)
+def answer_stream(
+    request: Request,
+    req: AnswerRequest,
+    _user: str = Depends(get_current_user),
+) -> StreamingResponse:
+    """The answer as plain text, sent piece by piece while the model writes it."""
+
+    def pieces():
+        # Looked up when the stream starts, not when the route returns.
+        key, remembered, prompt = _prepared_answer(req)
+        if remembered is not None or prompt is None:
+            yield NO_CONTEXT_ANSWER if remembered is None else remembered
+            return
+        sent: list[str] = []
+        try:
+            for piece in _stream_completion(prompt):
+                sent.append(piece)
+                yield piece
+        except Exception as exc:  # noqa: BLE001 - the response has already begun
+            logger.warning("the answer stream broke off: %s", exc)
+            if not sent:
+                yield STREAM_FAILED_ANSWER
+            return
+        whole = "".join(sent).strip()
+        if whole:
+            ANSWER_CACHE.set(key, whole)
+
+    return StreamingResponse(
+        pieces(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 def create_app(*, engine_factory=None) -> FastAPI:
@@ -277,6 +493,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
     the default one loads a model and opens a database, neither of which a
     test of routing should do.
     """
+    _start_error_reporting()
     build_engine = engine_factory or default_engine_factory
 
     @asynccontextmanager
@@ -287,25 +504,24 @@ def create_app(*, engine_factory=None) -> FastAPI:
         # of graphs, one of which nothing serves from.
         registry = REGISTRY
         # Opening a second graph must not load a second copy of the models.
-        # The loader closes over the instances this engine already warmed, so
-        # every graph opened later shares them rather than paying the cold
-        # start and the resident cost again.
         registry.set_loader(graph_loader(engine))
 
         # The `with` is the guarantee for a startup that fails before the
         # store reaches the registry. Past that point the registry owns the
         # close, and Engine.close is idempotent, so the two do not conflict.
         with engine:
-            # Single-tenant operation is the ordinary path: the process store
-            # is attached under the default identifier, so a run with no
-            # tenancy configured serves from exactly the store it opens today
-            # and never consults the tenant root at all.
-            registry.attach(DEFAULT_TENANT_ORG_ID, engine, path=str(engine.path))
+            registry.attach(
+                DEFAULT_TENANT_ORG_ID,
+                engine,
+                path=str(engine.path),
+                version=LOCAL_DEFAULT_VERSION,
+            )
             app.state.engine = engine
             app.state.active_path = Path(engine.path)
             app.state.pod_agent = None
             app.state.pod_agent_stop = None
 
+            _bring_up_history()
             _bring_up_the_control_plane()
 
             agent = None
@@ -316,8 +532,6 @@ def create_app(*, engine_factory=None) -> FastAPI:
                 from ..pod import boot, poll
 
                 try:
-                    # Off the event loop: it opens a session and copies
-                    # files, and inline that is time nothing is served.
                     hydrated = await asyncio.to_thread(boot, registry=registry)
                     logger.info("hydrated %d tenant(s) at startup", len(hydrated))
                 except Exception:  # noqa: BLE001 - serving beats registering
@@ -326,9 +540,6 @@ def create_app(*, engine_factory=None) -> FastAPI:
                     )
 
                 stop = asyncio.Event()
-                # Held on the application state rather than left to float: the
-                # shutdown path needs both, and a task nobody references can
-                # be collected while it is still running.
                 agent = asyncio.create_task(poll(registry=registry, stop=stop))
                 app.state.pod_agent = agent
                 app.state.pod_agent_stop = stop
@@ -339,14 +550,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
             finally:
                 # The agent stops **before** the stores close. A tick in
                 # flight is holding handles and may be part way through
-                # swapping one; closing underneath it is a use-after-close,
-                # and the ordering here is the only thing preventing that.
-                #
-                # Awaited rather than cancelled. The loop's wait wakes on the
-                # signal, so this costs nothing when it is idle, and a tick
-                # that is mid-download gets to finish rather than being torn
-                # open and leaving half a file in the cache with a registry
-                # entry pointing at it.
+                # swapping one; closing underneath it is a use-after-close.
                 if agent is not None:
                     try:
                         stop.set()
@@ -360,11 +564,15 @@ def create_app(*, engine_factory=None) -> FastAPI:
                 app.state.pod_agent_stop = None
                 app.state.engine = None
                 app.state.active_path = None
-                # Every handle the registry holds, not just the one startup
-                # opened -- anything attached during the run closes here too.
                 registry.close_all()
 
-    app = FastAPI(title="graphrag", lifespan=lifespan)
+    app = FastAPI(title="graphRAG API", version="0.1.0", lifespan=lifespan)
+
+    # Per-user limits on the model routes: the limiter lives on the
+    # application state, and an exceeded limit becomes a 429.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
     app.add_middleware(TenantRoutingMiddleware)
     # Added last, so it is the outermost layer: a refusal from the routing gate
     # still carries the headers a browser needs to read it.
@@ -375,256 +583,146 @@ def create_app(*, engine_factory=None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.get("/health", response_model=Health)
-    def health(request: Request) -> Health:
-        """Unauthenticated on purpose.
-
-        A readiness probe that needs a credential cannot report that
-        credentials are misconfigured, which is one of the things it most
-        needs to be able to report.
-        """
-        return Health(
-            status="ok",
-            store_open=getattr(request.app.state, "engine", None) is not None,
-        )
-
-    @app.post("/query", response_model=QueryResponse)
-    async def query(
-        payload: QueryRequest,
-        request: Request,
-        user_id: str = Depends(get_current_user),
-        org_id: str = Depends(get_current_tenant_org),
-    ) -> QueryResponse:
-        """Run one query and return the ranked set with its evidence.
-
-        Both dependencies are required because this route reads graph data.
-        A data-bearing route without a resolved tenant is a route that reads
-        whichever store the process happens to hold, which is the failure the
-        tenant check exists to prevent — so it is resolved here even though
-        the store is currently one per process.
-
-        The query goes through the facade's async entry point, so encoding and
-        traversal run off the event loop rather than blocking every other
-        request for the duration.
-
-        **A caller who names no session gets exactly the path that existed
-        before history did**: nothing is looked up, nothing is written, and
-        the history database is not consulted or even connected to. Naming a
-        session opts into recording, and a session that is not the caller's
-        is refused *before* any query work is done rather than after — there
-        is no reason to spend a retrieval on a request that will not be
-        answered.
-        """
-        import asyncio
-
-        if payload.session_id is not None:
-            await _authorise_session(payload.session_id, user_id)
-
-        engine = engine_for(request, org_id)
-        try:
-            run = await engine.retrieve_async(payload.query, payload.k)
-            # A second blocking call, and the facade has no async form of it.
-            # Handed to a thread here rather than reaching past the facade or
-            # reshaping it for one consumer.
-            documents = await asyncio.to_thread(
-                engine.store.documents_for_entities, run.ids
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="the query could not be completed",
-            ) from exc
-
-        answer = QueryResponse(**format_run(run, documents))
-
-        if payload.session_id is not None:
-            # After the answer exists, and off the event loop. A failure here
-            # is swallowed inside the recorder: a question answered but not
-            # recorded is a better outcome than one refused because the
-            # recording failed.
-            await asyncio.to_thread(
-                _record_query, payload.session_id, payload.query, answer
-            )
-
-        return answer
-
-    @app.post("/subgraph", response_model=SubgraphResponse)
-    async def subgraph(
-        payload: SubgraphRequest,
-        request: Request,
-        user_id: str = Depends(get_current_user),
-        org_id: str = Depends(get_current_tenant_org),
-    ) -> SubgraphResponse:
-        """The given nodes, their one-hop neighbours, and the edges between.
-
-        Reads graph data, so it resolves a tenant like the query route does.
-
-        An unknown id contributes nothing rather than failing the request. A
-        caller expanding a set it got from somewhere else should not have the
-        whole call rejected because one node has since gone.
-
-        The store read is blocking and goes to a thread for the same reason
-        the query path does: on the event loop it would serialise every other
-        request behind it.
-        """
-        import asyncio
-
-        engine = engine_for(request, org_id)
-        try:
-            result = await asyncio.to_thread(engine.store.subgraph, payload.ids)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="the subgraph could not be read",
-            ) from exc
-
-        return SubgraphResponse(**result)
-
-    @app.get("/suggestions", response_model=SuggestionsResponse)
-    async def suggestions(
-        request: Request,
-        limit: int = 5,
-        user_id: str = Depends(get_current_user),
-        org_id: str = Depends(get_current_tenant_org),
-    ) -> SuggestionsResponse:
-        """Example questions built from what this graph actually holds.
-
-        Over-fetches and diversifies -- see ``suggestions_from`` for why asking
-        for exactly the limit returns the same kind of thing repeatedly.
-
-        **A store that cannot answer yields an empty list, not an error.** A
-        graph too small or too new to suggest anything is an ordinary state,
-        and a caller rendering a prompt bar should show nothing rather than an
-        error where its examples would be.
-        """
-        import asyncio
-
-        engine = engine_for(request, org_id)
-        try:
-            entities = await asyncio.to_thread(
-                engine.store.most_connected, max(limit, 1) * OVERFETCH
-            )
-        except Exception:
-            return SuggestionsResponse(suggestions=[])
-
-        return SuggestionsResponse(
-            suggestions=[
-                Suggestion(**item) for item in suggestions_from(entities, limit)
-            ]
-        )
-
-    # ----------------------------------------------------------------------
-    # The local single-store workflow.
-    #
-    # These two enumerate graph files in this checkout and change which one
-    # this process serves. They are **not** multi-tenancy: they operate on the
-    # default tenant only and never touch another tenant's registry entry.
-    # Multi-tenancy is the registry path, where a graph arrives from outside
-    # and is attached.
-    #
-    # **Both are deliberately unauthenticated.** They are a local developer
-    # affordance -- somebody keeping a graph per repository and moving between
-    # them -- and requiring a credential to switch a graph on your own machine
-    # is friction for no protection there. The argument against is real and
-    # was made: they change what the server serves for everybody, so on
-    # anything reachable they are an unauthenticated state change. That
-    # argument was heard and this is the decision anyway, recorded here so the
-    # next reader sees a choice rather than an oversight. There is no flag to
-    # toggle it: a third behaviour is a third thing to reason about.
-    # ----------------------------------------------------------------------
-
-    @app.get("/graphs", response_model=GraphsResponse)
-    def graphs(request: Request) -> GraphsResponse:
-        """Every graph this checkout can serve, and which one is active."""
-        active_path = getattr(request.app.state, "active_path", None)
-
-        summaries = []
-        active_id = None
-        for path in graph_paths():
-            identifier = path.stem
-            is_active = active_path is not None and _same_file(path, active_path)
-            if is_active:
-                active_id = identifier
-            summaries.append(
-                GraphSummary(id=identifier, label=graph_label(path), active=is_active)
-            )
-
-        return GraphsResponse(graphs=summaries, active=active_id)
-
-    @app.post("/graphs/switch", response_model=SwitchResponse)
-    def switch(payload: SwitchRequest, request: Request) -> SwitchResponse:
-        """Serve a different discovered graph from now on.
-
-        The id must be one discovery found. Anything else is a 404 rather than
-        an attempt to open whatever path was sent -- this route selects among
-        known files, it does not take instructions about the filesystem.
-
-        Three things move together, and missing any one leaves the process
-        half-switched:
-
-        * the router is repointed at the new store **without being rebuilt**,
-          so the loaded models are kept rather than paid for again
-        * the recorded active store and path are updated
-        * the **default tenant's registry entry is re-bound**, because tenant
-          resolution reads the registry and would otherwise keep handing out
-          the previous file while this route served the new one
-
-        The displaced store is closed only if it really is a different object.
-        Closing the one just installed would leave the process serving a shut
-        handle.
-        """
-        # The process's registry, the same object startup attached to and
-        # every other lookup here resolves through.
-        registry = REGISTRY
-
-        match = next((path for path in graph_paths() if path.stem == payload.id), None)
-        if match is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="no such graph"
-            )
-
-        try:
-            # Opens through the registry loader, which carries the warm models,
-            # and re-binds the default tenant in the same call.
-            displaced = registry.replace(DEFAULT_TENANT_ORG_ID, path=str(match))
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="the graph could not be opened",
-            ) from exc
-
-        engine = registry.get(DEFAULT_TENANT_ORG_ID)
-        app.state.engine = engine
-        app.state.active_path = match
-
-        # Only if it is genuinely displaced. Closing the new one would leave
-        # this process serving a shut handle.
-        if displaced is not None and displaced.handle is not engine:
-            registry.close_entries([displaced])
-
-        return SwitchResponse(
-            id=match.stem, label=graph_label(match), nodes=engine.store.count_nodes()
-        )
-
-    @app.get("/projects")
-    def projects(
+    @app.post("/api/trace")
+    async def trace(
+        req: TraceRequest,
         request: Request,
         user_id: str = Depends(get_current_user),
         org_id: str = Depends(get_current_tenant_org),
     ) -> dict:
-        """What the two dependencies were built against.
+        """Run one query and return the ranked nodes, the trace and the context.
 
-        Reads no graph data — it returns the two resolved ids and nothing
-        else, which is what makes it a check on the credentials rather than a
-        query path.
+        A caller who names a session has the run recorded there, once the
+        session is confirmed to be theirs; one that is missing or somebody
+        else's is the same single refusal.
         """
+        from .. import history as history_module
+
+        engine = engine_for(request, org_id)
+        run = await engine.retrieve_async(req.query, req.top_k or TOP_K_VECTOR)
+        response = await asyncio.to_thread(routed_response, run, engine.store)
+
+        payload = asdict(response)
+        for node, result in zip(response.results, payload["results"]):
+            result["page_content"] = format_page_content(node)
+        payload["context"] = build_context(response.results)
+
+        if req.session_id:
+            owner = await asyncio.to_thread(history_module.session_owner, req.session_id)
+            if owner is None or owner != user_id:
+                logger.warning("session %s refused for %s", req.session_id, user_id)
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="no such session",
+                )
+            payload["trace_id"] = await asyncio.to_thread(
+                history_module.persist_trace,
+                session_id=req.session_id,
+                query=req.query,
+                execution_plan=payload["trace_log"],
+                graph_payload=payload["results"],
+            )
+        return payload
+
+    @app.post("/api/subgraph")
+    async def subgraph(
+        req: SubgraphRequest,
+        request: Request,
+        org_id: str = Depends(get_current_tenant_org),
+    ) -> dict:
+        """The requested nodes, their one-hop neighbours, and the edges between."""
+        engine = engine_for(request, org_id)
+        return await asyncio.to_thread(engine.store.subgraph, req.node_ids)
+
+    @app.get("/api/suggestions")
+    async def suggestions(
+        request: Request,
+        limit: int = 5,
+        org_id: str = Depends(get_current_tenant_org),
+    ) -> dict:
+        """Example questions built from this graph's most connected entities.
+
+        A store that cannot list them suggests nothing rather than failing: a
+        graph too small or too new to suggest anything is an ordinary state.
+        """
+        engine = engine_for(request, org_id)
+        try:
+            hubs = await asyncio.to_thread(engine.store.top_entities, limit * 4)
+        except Exception as exc:  # noqa: BLE001 - an empty list, not an error
+            logger.warning("top_entities failed: %s", exc)
+            return {"suggestions": []}
+        return {"suggestions": suggestions_from(hubs, limit)}
+
+    # ----------------------------------------------------------------------
+    # The local single-store workflow: list the graph files in this checkout
+    # and change which one this process serves. They operate on the default
+    # tenant only and are deliberately unauthenticated — a local developer
+    # affordance, recorded here as a choice rather than an oversight.
+    # ----------------------------------------------------------------------
+
+    @app.get("/api/graphs")
+    def graphs(request: Request) -> dict:
+        """Every graph this checkout can serve, and which one is active."""
+        active_path = getattr(request.app.state, "active_path", None)
+        listed = [
+            {
+                "id": path.name,
+                "label": graph_label(path),
+                "active": active_path is not None and _same_file(path, active_path),
+            }
+            for path in graph_paths()
+        ]
+        active = Path(active_path).name if active_path is not None else None
+        return {"graphs": listed, "active": active}
+
+    @app.post("/api/graphs/switch")
+    def switch(req: SwitchRequest, request: Request) -> dict:
+        """Serve a different discovered graph from now on.
+
+        The id must be one discovery found; anything else is a 404 rather than
+        an attempt to open whatever was sent. The new store opens through the
+        registry loader, which keeps the loaded models, and re-binds the
+        default tenant in the same call. Summaries are dropped, because they
+        describe the previous graph.
+        """
+        registry = REGISTRY
+
+        match = next((path for path in graph_paths() if path.name == req.id), None)
+        if match is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown graph: {req.id}",
+            )
+
+        displaced = registry.replace(
+            DEFAULT_TENANT_ORG_ID, path=str(match), version=LOCAL_DEFAULT_VERSION
+        )
+        engine = registry.get(DEFAULT_TENANT_ORG_ID)
+        app.state.engine = engine
+        app.state.active_path = match
+        SUMMARY_CACHE.clear()
+
+        if displaced is not None and displaced.handle is not engine:
+            try:
+                registry.close_entries([displaced])
+            except Exception as exc:  # noqa: BLE001 - the new graph is already live
+                logger.warning("the graph switched away from did not close: %s", exc)
+
+        logger.info("now serving the graph at %s", match)
         return {
-            "user_id": user_id,
-            "org_id": org_id,
-            "state_user_id": request.state.user_id,
-            "state_org_id": request.state.org_id,
+            "active": match.name,
+            "label": graph_label(match),
+            "nodes": engine.store.count_nodes(),
         }
 
+    @app.get("/api/health")
+    def health(request: Request) -> dict:
+        """Unauthenticated on purpose: a readiness probe that needs a
+        credential cannot report that credentials are misconfigured."""
+        engine = REGISTRY.get(DEFAULT_TENANT_ORG_ID)
+        return {"status": "ok", "nodes": engine.store.count_nodes()}
+
+    app.include_router(model_router)
     app.include_router(history_router)
     app.include_router(onboarding_router)
     app.include_router(webhooks_router)
