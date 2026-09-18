@@ -187,12 +187,12 @@ DOC_TABLE = "Document"
 #: One relationship table, not one per relation type. The relation name is a
 #: STRING column, so AUTHORED and the rest are values rather than tables, and
 #: their weights are the CONFIDENCE values above.
-REL_TABLE = "Related"
+REL_TABLE = "RELATES_TO"
 
 #: Document to entity. Its own table because its endpoints differ from every
 #: other relation — Document to Entity rather than Entity to Entity — which is
 #: also why it carries no properties and is absent from the relation constants.
-MENTIONS_TABLE = "Mentions"
+MENTIONS_TABLE = "MENTIONS"
 
 #: Width of the embedding column. This must equal the embedding model's output
 #: size: the column is fixed-width at CREATE TABLE time, so it cannot be
@@ -201,7 +201,7 @@ MENTIONS_TABLE = "Mentions"
 EMBEDDING_DIMENSION = 384
 
 #: Vector index over the entity embedding column.
-VECTOR_INDEX_NAME = "entity_embedding_index"
+VECTOR_INDEX_NAME = "idx_entity_embedding"
 
 #: Distance metric for that index. Cosine, because embeddings are L2-normalised
 #: before they are stored, which makes cosine distance and the dot product the
