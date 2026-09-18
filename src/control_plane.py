@@ -287,17 +287,19 @@ def _moment(seconds: int | None) -> datetime | None:
     return datetime.fromtimestamp(int(seconds), timezone.utc)
 
 
-def verify_key(record: ApiKeyRecord | None, hashed_key: str) -> bool:
-    """Whether ``record`` really is the credential for ``hashed_key``, and live.
+def verify_key(
+    record: ApiKeyRecord | None, hashed_key: str
+) -> ApiKeyRecord | None:
+    """Return the live matching record, otherwise ``None``.
 
     Constant-time on the digest comparison, and revocation checked here rather
     than at the call site so no caller can verify a key and forget to ask.
     """
     if record is None:
-        return False
+        return None
     if not hmac.compare_digest(record.hashed_key, hashed_key):
-        return False
-    return not record.is_revoked
+        return None
+    return None if record.is_revoked else record
 
 
 def open_control_plane(

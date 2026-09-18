@@ -45,8 +45,10 @@ from sqlmodel import Session, select
 
 from ..ingestion.github import GitHubRateLimitError
 from ..models.control_plane import (
+    JOB_COMPLETED,
     JOB_FAILED,
     JOB_FETCHING,
+    JOB_REGISTERED,
     GraphArtifact,
     IngestJob,
     Organization,
@@ -60,10 +62,8 @@ logger = logging.getLogger("graphrag.worker.compile")
 #: What a compile reports back. Strings rather than an enumeration, for the
 #: same reason the statuses in the control plane are strings: every one of
 #: these crosses a queue as text.
-COMPILED = "compiled"
-SKIPPED = "skipped"
-LOCKED = "locked"
-UNKNOWN_ORGANIZATION = "unknown-organization"
+SKIPPED_LOCKED = "lock_held"
+UNKNOWN_ORGANIZATION = "unknown_org"
 
 #: How long to wait before trying again when the source is out of quota and
 #: says nothing about when it will not be.
@@ -91,7 +91,7 @@ def run_phases(org_id: str, job_id: str, db: Session):
 
 
 @app.task(bind=True, name=COMPILE_TASK, max_retries=MAX_RETRIES)
-def compile_organization(self, org_id: str) -> str:
+def reconcile_org_to_head(self, org_id: str) -> dict:
     """Rebuild one organisation's graph, if nobody else is already doing it.
 
     Returns what happened. **Not acquiring the lock is a return, not a
@@ -102,35 +102,33 @@ def compile_organization(self, org_id: str) -> str:
     with compile_lock(org_id) as acquired:
         if not acquired:
             logger.info("%s: already compiling elsewhere; leaving it", org_id)
-            return LOCKED
+            return {"org_id": org_id, "status": SKIPPED_LOCKED}
 
         engine = create_control_plane_engine()
         sessions = control_plane_sessions(engine)
 
         try:
             with sessions() as db:
-                return _compile(org_id, db)
+                return _reconcile(org_id, db)
         except GitHubRateLimitError as exc:
             # The one transient condition. The job row was already finalised
             # as failed on the way out of the core, so the constraint will
             # let the retry open a new one.
-            delay = min(
-                int(exc.retry_after or DEFAULT_RETRY_SECONDS), MAX_RETRY_SECONDS
-            )
+            delay = min(exc.retry_after or DEFAULT_RETRY_SECONDS, MAX_RETRY_SECONDS)
             logger.warning("%s: out of quota; trying again in %ds", org_id, delay)
             raise self.retry(exc=exc, countdown=delay)
         finally:
             engine.dispose()
 
 
-def _compile(org_id: str, db: Session) -> str:
+def _reconcile(org_id: str, db: Session) -> dict:
     """Open a job, run the phases, and record what became of it."""
     organization = db.get(Organization, org_id)
     if organization is None:
         # Armed, then deleted before the sweeper came round. Not an error and
         # not worth a failed job row for an organisation that is not there.
         logger.warning("%s: no such organisation; nothing to compile", org_id)
-        return UNKNOWN_ORGANIZATION
+        return {"org_id": org_id, "status": UNKNOWN_ORGANIZATION}
 
     job = IngestJob(
         job_id=_new_job_id(),
@@ -155,8 +153,15 @@ def _compile(org_id: str, db: Session) -> str:
 
     # A run that found nothing changed built nothing, and says so.
     if getattr(summary, "skipped", False):
-        return SKIPPED
-    return COMPILED
+        return {"org_id": org_id, "job_id": job_id, "status": JOB_COMPLETED}
+    return {
+        "org_id": org_id,
+        "job_id": job_id,
+        "artifact_id": summary.artifact_id,
+        "version": summary.version,
+        "s3_uri": summary.s3_uri,
+        "status": JOB_REGISTERED,
+    }
 
 
 def set_job_status(db: Session, job_id: str, status: str) -> None:

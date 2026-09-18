@@ -51,7 +51,7 @@ from .config import QUEUE_NAME, REDIS_URL, SWEEP_INTERVAL_SECONDS
 #: The tasks, by the names they are registered under. Written here so the
 #: schedule and the registration cannot drift apart -- both read these.
 SWEEP_TASK = "graphrag.sweep"
-COMPILE_TASK = "graphrag.compile"
+COMPILE_TASK = "worker.tasks.reconcile_org_to_head"
 
 #: The entry in the schedule that runs the sweeper.
 SWEEP_SCHEDULE_ENTRY = "sweep-due-organisations"

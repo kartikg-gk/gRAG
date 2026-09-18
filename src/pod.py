@@ -167,11 +167,10 @@ def hydrate(
                     assignment.artifact_id,
                 )
                 continue
-
             destination = pod_cache_path(
                 pod_id, org_id, str(artifact.version), root=cache_root
             )
-            get_artifact(artifact.uri, destination, root=artifact_root)
+            get_artifact(artifact.s3_uri, destination, root=artifact_root)
             registry.replace(
                 org_id, path=str(destination), version=str(artifact.version)
             )

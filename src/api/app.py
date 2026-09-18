@@ -82,6 +82,7 @@ from ..retrieval.response import format_page_content
 from . import auth as auth_module
 from .auth import get_current_tenant_org, get_current_user
 from .history_routes import router as history_router
+from .github_oauth import router as github_oauth_router
 from .models import (
     AnswerRequest,
     SubgraphRequest,
@@ -709,6 +710,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
 
     app.include_router(model_router)
     app.include_router(history_router)
+    app.include_router(github_oauth_router)
     app.include_router(onboarding_router)
     app.include_router(webhooks_router)
 

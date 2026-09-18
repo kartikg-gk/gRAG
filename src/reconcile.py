@@ -16,7 +16,7 @@ summary; no clock, no environment, no waiting.
 Intent and reality
 ------------------
 
-An organisation's ``active_artifact_id`` is what it is **supposed** to be
+An organisation's ``desired_artifact_id`` is what it is **supposed** to be
 serving. An assignment's ``artifact_id`` is what this process **has**. The
 pass looks at every organisation assigned here and acts only where those two
 differ. Where they agree it does nothing at all — no download, no open, no
@@ -168,7 +168,7 @@ def reconcile(
         ).all()
 
         for assignment, organization in assignments:
-            intended = organization.active_artifact_id
+            intended = organization.desired_artifact_id
             loaded = assignment.artifact_id
 
             if intended is None or intended == loaded:
@@ -194,13 +194,21 @@ def reconcile(
                 )
                 continue
 
+            if not artifact.checksum_sha256:
+                logger.error(
+                    "%s: artifact %s has no recorded checksum; not downloading",
+                    organization.org_id,
+                    artifact.artifact_id,
+                )
+                continue
+
             destination = pod_cache_path(
                 pod_id,
                 organization.org_id,
                 str(artifact.version),
                 root=cache_root,
             )
-            get_artifact(artifact.uri, destination, root=artifact_root)
+            get_artifact(artifact.s3_uri, destination, root=artifact_root)
 
             if not _arrived_intact(organization.org_id, artifact, destination):
                 continue
@@ -221,7 +229,7 @@ def reconcile(
                 artifact.status = ARTIFACT_ACTIVE
             # The build that produced this is over, and the row that says so
             # is what frees the tenant for its next one.
-            _retire_job(db, artifact.job_id)
+            _retire_job(db, artifact.built_by_job_id)
             # Per tenant, so a later failure does not undo this one.
             db.commit()
 
@@ -309,7 +317,7 @@ def _arrived_intact(org_id: str, artifact: Any, destination: Path) -> bool:
     there is nothing to check against, and swapping anyway would mean the one
     artifact nobody can verify is the one that goes in unverified.
     """
-    if not artifact.checksum:
+    if not artifact.checksum_sha256:
         logger.error(
             "%s: artifact %s has no recorded checksum; not swapping",
             org_id,
@@ -318,7 +326,7 @@ def _arrived_intact(org_id: str, artifact: Any, destination: Path) -> bool:
         return False
 
     arrived = checksum(destination)
-    if arrived != artifact.checksum:
+    if arrived != artifact.checksum_sha256:
         logger.error(
             "%s: artifact %s failed its checksum; not swapping",
             org_id,
