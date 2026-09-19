@@ -55,9 +55,9 @@ caps every score at ``N / |I|`` and an item longer than ``5N`` cannot clear a
 largest sampled is 4,371 words — and the fix has to be a smaller unit, since a
 threshold loose enough to admit a whole body admits everything.
 
-The size and overlap live in ``common.config`` with the measurement behind
-them. The splitting itself is ``chunking.windows``, the extractor's, called
-with different parameters rather than reimplemented.
+The character size and overlap live in ``common.config``. They are independent
+of the extractor's word windows: stored chunks preserve exact character slices
+while extraction windows preserve whole words and absolute offsets.
 
 Ids carry the chunk index
 -------------------------
@@ -79,8 +79,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Iterator, Mapping
 
-from ..analysis.chunking import windows
-from ..common.config import DOCUMENT_CHUNK_OVERLAP_WORDS, DOCUMENT_CHUNK_WORDS
+from ..common.config import (
+    DOCUMENT_CHUNK_CHARACTERS,
+    DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
+)
 
 
 @dataclass(frozen=True)
@@ -114,41 +116,43 @@ def _usable(text: str | None) -> bool:
     return bool(text and text.strip())
 
 
+def _character_windows(
+    text: str,
+    *,
+    size: int = DOCUMENT_CHUNK_CHARACTERS,
+    overlap: int = DOCUMENT_CHUNK_OVERLAP_CHARACTERS,
+) -> Iterator[str]:
+    """Yield exact character slices of ``text`` in deterministic order."""
+    step = size - overlap
+    for start in range(0, len(text), step):
+        chunk = text[start : start + size]
+        if not chunk:
+            break
+        yield chunk
+        if start + size >= len(text):
+            break
+
+
 def _chunks(
     base_id: str, path: str, content: str, origin: str, field: str
 ) -> Iterator[SourceDocument]:
     """One record per chunk of ``content``, in reading order.
 
-    **The windowing is the extractor's, not a second implementation.**
-    ``chunking.windows`` already cuts on word boundaries and already carries
-    absolute offsets, and the only thing that differs here is the parameters —
-    which is what makes it one implementation with two callers rather than two
-    that can drift apart. The sizes differ because the questions differ: the
-    extractor's window is bounded by what a statistical model will accept, and
-    this one by the coverage ceiling.
-
-    Cutting on a word boundary is what protects an identifier. ``#412`` and
-    ``payment_service`` are single words to the splitter, so no boundary can
-    fall inside one; an entity spanning *several* words is what the overlap is
-    for.
+    Stored chunks are exact character slices. Their geometry is independent of
+    extraction's word windows and never normalizes the content between the
+    selected boundaries.
 
     ``_usable`` is applied per chunk rather than only per field. A body whose
     tail is a signature line or a horizontal rule would otherwise store a row
     that carries a path, occupies space, and can never yield a mention.
     """
-    for index, window in enumerate(
-        windows(
-            content,
-            size=DOCUMENT_CHUNK_WORDS,
-            overlap=DOCUMENT_CHUNK_OVERLAP_WORDS,
-        )
-    ):
-        if not _usable(window.text):
+    for index, chunk in enumerate(_character_windows(content)):
+        if not _usable(chunk):
             continue
         yield SourceDocument(
             id=f"{base_id}:{index}",
             path=path,
-            content=window.text,
+            content=chunk,
             origin=origin,
             field=field,
         )

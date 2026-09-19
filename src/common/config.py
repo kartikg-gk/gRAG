@@ -101,8 +101,8 @@ ENTITY_PRODUCT = "Product"
 #: Sliding window over words, and how much consecutive windows share. Overlap
 #: exists so an entity straddling a window edge is still seen whole by one of
 #: them; it must stay smaller than the window or the windows stop advancing.
-WINDOW_WORDS = 200
-WINDOW_OVERLAP_WORDS = 40
+WINDOW_WORDS = 300
+WINDOW_OVERLAP_WORDS = 50
 
 #: Shortest surface form worth keeping, after cleaning. Anything shorter is
 #: punctuation or a fragment, not an entity.
@@ -649,69 +649,16 @@ CORS_ORIGINS = [
 # --------------------------------------------------------------------------
 # Document chunking
 #
-# A stored document is one chunk, not one body. The unit matters because
-# coverage divides by the item's token count: an answer of N tokens caps every
-# score at N/|I|, so clearing threshold t needs |I| <= N/t — at 0.2, |I| <= 5N.
-# An item past that length is unreachable however relevant it is, and the
-# response has to be a smaller unit rather than a looser threshold, because a
-# threshold loose enough to admit a whole body admits everything.
-#
-# Measured on 600 documents drawn from three public repositories, in the four
-# fields this project stores — pull request bodies, issue bodies, review
-# bodies, commit messages:
-#
-#     pull request bodies   median 112 words, p90 300, max 4371
-#     issue bodies          median 127 words, p90 317, max  614
-#     commit messages       median   7 words, p90  34, max  271
-#     all four              median  25 words, p90 210, p95 300
-#
-# Two things follow. Most documents are short — a 120-word window leaves 77%
-# of them as a single chunk, and the median pull request body untouched — so
-# chunking costs nothing on the common case and only splits the tail. And the
-# tail is long enough to matter: the largest body sampled is 4,371 words.
-#
-# The ceiling is in scoring tokens, not words, and the two differ. Measured
-# over 100 real bodies, tokenisation yields **0.523 tokens per word** after
-# stopwords and the minimum length are applied. So:
-#
-#     window   resulting |I|          smallest answer that can clear 0.2
-#     words    median / p90 tokens    median / p90
-#      60        31 /  42                6.2 / 8.4
-#     120        62 /  84               12.4 / 16.8
-#     200       104 / 140               20.8 / 28.0
-#
-# **The size is set by the worst case, not the median.** 0.523 is prose. Text
-# that is mostly identifiers, code, or long unrepeated words tokenises at up
-# to 1.0 tokens per word, because nothing is a stopword and nothing falls
-# under the minimum length — and a pull request body full of stack traces is
-# exactly that. Sizing on the median would put those chunks over the ceiling
-# while the average one looked fine, which is the failure that is invisible
-# in an average.
-#
-# So the bound is taken at a ratio of 1.0: the shortest answer in the stored
-# traces is 17 tokens, giving |I| <= 85, and a window of 80 words cannot
-# exceed 80 tokens however dense its text. On real prose the same window lands
-# at a median of 42 tokens and a p90 of 56, comfortably inside.
-#
-# What that costs: 67% of documents stay a single chunk instead of the 77% a
-# 120-word window would leave, so more bodies split. That is the price of the
-# bound holding for every input rather than for the typical one.
+# Stored source documents use character windows. This is deliberately separate
+# from entity extraction's word windows: storage boundaries preserve exact
+# substrings and have their own geometry.
 # --------------------------------------------------------------------------
 
-#: Words per stored chunk. Sized so that even text tokenising at 1.0 tokens
-#: per word stays under the coverage ceiling for a 17-token answer — the
-#: shortest answer in the stored traces — which puts the limit at 85 tokens.
-DOCUMENT_CHUNK_WORDS = 80
+#: Python string characters per stored source-document chunk.
+DOCUMENT_CHUNK_CHARACTERS = 1200
 
-#: Words carried into the next chunk, so an entity spanning a boundary is
-#: still whole in one of them.
-#:
-#: **Chosen, not measured.** The longest entity any rule can match is three
-#: words — ``pull request #1347`` — so three is the measured floor. Fifteen is
-#: five times that, leaving room for the statistical stage's multi-word spans
-#: without measuring them, and costing 19% duplicated text. A measurement of
-#: real span lengths would justify moving it.
-DOCUMENT_CHUNK_OVERLAP_WORDS = 15
+#: Python string characters carried into the next stored document chunk.
+DOCUMENT_CHUNK_OVERLAP_CHARACTERS = 150
 
 
 # --------------------------------------------------------------------------
