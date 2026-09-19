@@ -84,11 +84,19 @@ from .auth import get_current_tenant_org, get_current_user
 from .history_routes import router as history_router
 from .github_oauth import router as github_oauth_router
 from .models import (
+    AnswerRead,
     AnswerRequest,
+    GraphSwitchRead,
+    GraphsRead,
+    HealthRead,
+    SubgraphRead,
     SubgraphRequest,
+    SuggestionsRead,
+    SummaryRead,
     SummarizeRequest,
     SwitchRequest,
     TraceRequest,
+    TraceResponseRead,
 )
 from .onboarding import router as onboarding_router
 from .ratelimit import LLM_RATE_LIMIT, limiter
@@ -352,7 +360,11 @@ def suggestions_from(hubs, limit: int) -> list[dict]:
 model_router = APIRouter(prefix="/api")
 
 
-@model_router.post("/summarize")
+@model_router.post(
+    "/summarize",
+    response_model=SummaryRead,
+    response_model_exclude_none=True,
+)
 @limiter.limit(LLM_RATE_LIMIT)
 def summarize(
     request: Request,
@@ -382,7 +394,11 @@ def summarize(
     return {"summary": summary, "cached": False}
 
 
-@model_router.post("/answer")
+@model_router.post(
+    "/answer",
+    response_model=AnswerRead,
+    response_model_exclude_none=True,
+)
 @limiter.limit(LLM_RATE_LIMIT)
 def answer(
     request: Request,
@@ -570,7 +586,11 @@ def create_app(*, engine_factory=None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.post("/api/trace")
+    @app.post(
+        "/api/trace",
+        response_model=TraceResponseRead,
+        response_model_exclude_unset=True,
+    )
     async def trace(
         req: TraceRequest,
         request: Request,
@@ -610,7 +630,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
             )
         return payload
 
-    @app.post("/api/subgraph")
+    @app.post("/api/subgraph", response_model=SubgraphRead)
     async def subgraph(
         req: SubgraphRequest,
         request: Request,
@@ -620,7 +640,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
         engine = engine_for(request, org_id)
         return await asyncio.to_thread(engine.store.subgraph, req.node_ids)
 
-    @app.get("/api/suggestions")
+    @app.get("/api/suggestions", response_model=SuggestionsRead)
     async def suggestions(
         request: Request,
         limit: int = 5,
@@ -646,7 +666,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
     # affordance, recorded here as a choice rather than an oversight.
     # ----------------------------------------------------------------------
 
-    @app.get("/api/graphs")
+    @app.get("/api/graphs", response_model=GraphsRead)
     def graphs(request: Request) -> dict:
         """Every graph this checkout can serve, and which one is active."""
         active_path = getattr(request.app.state, "active_path", None)
@@ -661,7 +681,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
         active = Path(active_path).name if active_path is not None else None
         return {"graphs": listed, "active": active}
 
-    @app.post("/api/graphs/switch")
+    @app.post("/api/graphs/switch", response_model=GraphSwitchRead)
     def switch(req: SwitchRequest, request: Request) -> dict:
         """Serve a different discovered graph from now on.
 
@@ -701,7 +721,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
             "nodes": engine.store.count_nodes(),
         }
 
-    @app.get("/api/health")
+    @app.get("/api/health", response_model=HealthRead)
     def health(request: Request) -> dict:
         """Unauthenticated on purpose: a readiness probe that needs a
         credential cannot report that credentials are misconfigured."""

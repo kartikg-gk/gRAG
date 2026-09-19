@@ -1,0 +1,146 @@
+{
+  "trace": {
+    "query": "who fixed login?",
+    "results": [
+      {
+        "id": "pr:1",
+        "label": "Fix login",
+        "type": "PR",
+        "score_total": 0.9,
+        "score_vector": 0.8,
+        "score_graph": 0.95,
+        "recency": 1.0,
+        "age_days": 3.0,
+        "documents": [
+          {
+            "doc_id": "doc:pr:1:0",
+            "content": "Fixed the login flow.",
+            "path": "https://github.com/acme/app/pull/1"
+          }
+        ],
+        "page_content": "Entity: Fix login (PR)\n\nContext:\nFixed the login flow."
+      }
+    ],
+    "trace_log": {
+      "intent": {
+        "alpha": 0.15,
+        "beta": 0.85,
+        "type": "relational"
+      },
+      "execution_path": {
+        "linked_seeds": ["pr:1"],
+        "vector_seeds": ["pr:1"],
+        "graph_hops": [
+          {
+            "from_id": "pr:1",
+            "to_id": "person:ada",
+            "confidence": 0.9,
+            "relation": "AUTHORED_BY"
+          }
+        ]
+      },
+      "recency": {
+        "enabled": true,
+        "floor": 0.35,
+        "applied": [
+          {
+            "id": "pr:1",
+            "age_days": 3.0,
+            "factor": 1.0
+          }
+        ]
+      },
+      "metrics": {
+        "graph_hits": 1,
+        "vector_k": 9,
+        "total_nodes_evaluated": 4
+      }
+    },
+    "context": "GRAPH FACTS:\n- Fix login (PR)\n\nSOURCE TEXT:\n[Fix login] Fixed the login flow.",
+    "trace_id": "trace-1"
+  },
+  "subgraph": {
+    "nodes": [
+      {
+        "id": "pr:1",
+        "label": "Fix login",
+        "type": "PR",
+        "requested": true
+      },
+      {
+        "id": "person:ada",
+        "label": "Ada",
+        "type": "Person",
+        "requested": false
+      }
+    ],
+    "edges": [
+      {
+        "source": "pr:1",
+        "target": "person:ada",
+        "confidence": 0.9,
+        "relation": "AUTHORED_BY"
+      }
+    ]
+  },
+  "suggestions": {
+    "suggestions": [
+      {
+        "query": "What did ada work on?",
+        "entity": "ada",
+        "type": "Person"
+      }
+    ]
+  },
+  "graphs": {
+    "graphs": [
+      {
+        "id": "graph.lbug",
+        "label": "memory (default)",
+        "active": true
+      }
+    ],
+    "active": "graph.lbug"
+  },
+  "graph_switch": {
+    "active": "graph.lbug",
+    "label": "memory (default)",
+    "nodes": 42
+  },
+  "health": {
+    "status": "ok",
+    "nodes": 42
+  },
+  "summary": {
+    "summary": "Ada fixed the login flow.",
+    "cached": false
+  },
+  "answer": {
+    "answer": "Ada fixed the login flow in PR 1.",
+    "cached": false
+  },
+  "session": {
+    "id": "session-1",
+    "user_id": "user-1",
+    "title": "Login investigation",
+    "created_at": "2026-09-19T00:00:00Z"
+  },
+  "session_trace": {
+    "id": "trace-1",
+    "session_id": "session-1",
+    "query": "who fixed login?",
+    "execution_plan": {
+      "intent": {
+        "alpha": 0.15,
+        "beta": 0.85,
+        "type": "relational"
+      }
+    },
+    "graph_payload": [
+      {
+        "id": "pr:1"
+      }
+    ],
+    "created_at": "2026-09-19T00:00:01Z"
+  }
+}

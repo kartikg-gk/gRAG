@@ -13,7 +13,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+
+class ContractModel(BaseModel):
+    """A wire contract that rejects accidental response fields."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class TraceRequest(BaseModel):
@@ -67,7 +73,7 @@ class SessionUpsert(BaseModel):
     session_id: str | None = None
 
 
-class SessionRead(BaseModel):
+class SessionRead(ContractModel):
     """One session, as its owner sees it."""
 
     id: str
@@ -76,7 +82,7 @@ class SessionRead(BaseModel):
     created_at: datetime
 
 
-class TraceRead(BaseModel):
+class TraceRead(ContractModel):
     """One recorded question in a session and what answering it involved."""
 
     id: str
@@ -85,3 +91,151 @@ class TraceRead(BaseModel):
     execution_plan: dict
     graph_payload: dict | list
     created_at: datetime
+
+
+class ResultDocumentRead(ContractModel):
+    doc_id: str | None
+    content: str | None
+    path: str | None
+
+
+class ResultRead(ContractModel):
+    id: str
+    label: str | None
+    type: str | None
+    score_total: float
+    score_vector: float
+    score_graph: float
+    recency: float
+    age_days: float | None
+    documents: list[ResultDocumentRead]
+    page_content: str
+
+
+class IntentTraceRead(ContractModel):
+    alpha: float
+    beta: float
+    type: str
+
+
+class GraphHopRead(ContractModel):
+    from_id: str
+    to_id: str
+    confidence: float
+    relation: str
+
+
+class ExecutionPathRead(ContractModel):
+    linked_seeds: list[str]
+    vector_seeds: list[str]
+    graph_hops: list[GraphHopRead]
+
+
+class AppliedRecencyRead(ContractModel):
+    id: str
+    age_days: float
+    factor: float
+
+
+class RecencyTraceRead(ContractModel):
+    enabled: bool
+    floor: float
+    applied: list[AppliedRecencyRead]
+
+
+class RetrievalMetricsRead(ContractModel):
+    graph_hits: int
+    vector_k: int
+    total_nodes_evaluated: int
+
+
+class RetrievalTraceRead(ContractModel):
+    intent: IntentTraceRead
+    execution_path: ExecutionPathRead
+    recency: RecencyTraceRead
+    metrics: RetrievalMetricsRead
+
+
+class TraceResponseRead(ContractModel):
+    query: str
+    results: list[ResultRead]
+    trace_log: RetrievalTraceRead
+    context: str
+    trace_id: str | None = None
+
+
+class SubgraphNodeRead(ContractModel):
+    id: str
+    label: str | None
+    type: str | None
+    requested: bool
+
+
+class SubgraphEdgeRead(ContractModel):
+    source: str
+    target: str
+    confidence: float
+    relation: str
+
+
+class SubgraphRead(ContractModel):
+    nodes: list[SubgraphNodeRead]
+    edges: list[SubgraphEdgeRead]
+
+
+class SuggestionRead(ContractModel):
+    query: str
+    entity: str
+    type: str
+
+
+class SuggestionsRead(ContractModel):
+    suggestions: list[SuggestionRead]
+
+
+class GraphRead(ContractModel):
+    id: str
+    label: str
+    active: bool
+
+
+class GraphsRead(ContractModel):
+    graphs: list[GraphRead]
+    active: str | None
+
+
+class GraphSwitchRead(ContractModel):
+    active: str
+    label: str
+    nodes: int
+
+
+class HealthRead(ContractModel):
+    status: str
+    nodes: int
+
+
+class SummaryRead(ContractModel):
+    summary: str
+    cached: bool
+    error: str | None = None
+
+
+class AnswerRead(ContractModel):
+    answer: str
+    cached: bool
+    error: str | None = None
+
+
+FRONTEND_RESPONSE_MODELS = {
+    "trace": TraceResponseRead,
+    "subgraph": SubgraphRead,
+    "suggestions": SuggestionsRead,
+    "graphs": GraphsRead,
+    "graph_switch": GraphSwitchRead,
+    "health": HealthRead,
+    "summary": SummaryRead,
+    "answer": AnswerRead,
+    "session": SessionRead,
+    "session_trace": TraceRead,
+}
