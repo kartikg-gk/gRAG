@@ -1,5 +1,5 @@
 import { ClerkProvider, SignIn, SignUp, UserButton, useAuth, useUser } from "@clerk/clerk-react";
-import { useEffect } from "react";
+import { useLayoutEffect } from "react";
 import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
 
@@ -45,7 +45,7 @@ function ClerkApplication() {
   const { getToken } = useAuth();
   const { isLoaded, user } = useUser();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setTokenGetter(() => getToken());
     return () => setTokenGetter(null);
   }, [getToken]);
