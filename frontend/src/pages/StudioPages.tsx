@@ -26,10 +26,11 @@ function TraceRow({ record, onClick, disabled }: { record: TraceRecord; onClick:
 }
 
 export function TracesPage() {
-  const { historyEnabled, activeSessionId, activeTraces, tracesLoading, tracesError, graphSwitching, refreshActiveTraces, selectTrace } = useStudio();
+  const { identity, historyEnabled, activeSessionId, activeTraces, tracesLoading, tracesError, graphSwitching, refreshActiveTraces, selectTrace } = useStudio();
   useEffect(() => { void refreshActiveTraces(); }, [refreshActiveTraces]);
   return <PageFrame title="Traces" action={historyEnabled && activeSessionId ? <button type="button" className="page-action" disabled={graphSwitching} onClick={() => void refreshActiveTraces()}><RotateCw size={15} /> Refresh</button> : undefined}>
-    {!historyEnabled ? <p className="p-5 text-sm text-ink-dim">Sign in to keep sessions</p>
+    {!identity.ready ? <p className="p-5 text-sm text-ink-dim" role="status" aria-live="polite">Loading account…</p>
+      : !historyEnabled ? <p className="p-5 text-sm text-ink-dim">Sign in to keep sessions</p>
       : !activeSessionId ? <p className="p-5 text-sm text-ink-dim">Choose a session to inspect its traces.</p>
         : tracesLoading ? <p className="flex items-center gap-2 p-5 text-sm text-ink-dim" role="status" aria-live="polite"><LoaderCircle size={16} className="animate-spin" /> Loading traces…</p>
           : tracesError ? <p className="p-5 text-sm text-red" role="alert">{tracesError}</p>
@@ -60,10 +61,11 @@ export function GraphsPage() {
 }
 
 export function SessionsPage() {
-  const { historyEnabled, sessions, sessionsLoading, sessionsError, activeSessionId, graphSwitching, selectSession, newChat, loadSessionsNow } = useStudio();
+  const { identity, historyEnabled, sessions, sessionsLoading, sessionsError, activeSessionId, graphSwitching, selectSession, newChat, loadSessionsNow } = useStudio();
   useEffect(() => { void loadSessionsNow(); }, [loadSessionsNow]);
   return <PageFrame title="Sessions" action={historyEnabled ? <button type="button" className="page-action" disabled={graphSwitching} onClick={newChat}><Plus size={15} /> New Chat</button> : undefined}>
-    {!historyEnabled ? <p className="p-5 text-sm text-ink-dim">Sign in to keep sessions</p>
+    {!identity.ready ? <p className="p-5 text-sm text-ink-dim" role="status" aria-live="polite">Loading account…</p>
+      : !historyEnabled ? <p className="p-5 text-sm text-ink-dim">Sign in to keep sessions</p>
       : sessionsLoading ? <p className="flex items-center gap-2 p-5 text-sm text-ink-dim" role="status" aria-live="polite"><LoaderCircle size={16} className="animate-spin" /> Loading sessions…</p>
         : sessionsError ? <p className="p-5 text-sm text-red" role="alert">{sessionsError}</p>
           : sessions.length === 0 ? <p className="p-5 text-sm text-ink-dim">No saved sessions yet.</p>
