@@ -2,8 +2,8 @@
 
 Two dependencies, two credentials, two stores, and no path between them.
 
-    Authorization: Bearer <session JWT>   ->  get_current_user      -> user_id
-    Authorization: Bearer <api key>       ->  get_current_tenant_org -> org_id
+    Authorization: Bearer <session JWT>  -> get_current_user       -> user_id
+    X-Graphrag-API-Key: <api key>        -> get_current_tenant_org -> org_id
 
 A verified user id never implies an organisation and an organisation never
 implies a user. That is the whole point: the first says a person is who they
@@ -11,12 +11,15 @@ claim to be, the second says a request is entitled to a particular tenant's
 data. A system that derives one from the other has one check wearing two hats,
 and the day the hats disagree is a cross-tenant read.
 
-Both credentials travel as a bearer token
------------------------------------------
+The credentials have separate channels
+--------------------------------------
 
-The session token and the API key each arrive as ``Authorization: Bearer``.
-Each dependency reads the header for its own credential; neither falls back to
-trying the other's.
+When session verification is enabled, the bearer token is exclusively the
+person's session JWT and the tenant key travels in ``X-Graphrag-API-Key``.
+That lets one request prove both identities without treating either credential
+as the other. Bearer API keys remain accepted only when session verification
+is disabled, preserving existing tenant-only clients without reintroducing the
+ambiguity in authenticated deployments.
 
 Failures
 --------
@@ -69,6 +72,9 @@ logger = logging.getLogger("graphrag.api.auth")
 #: One body for every rejection. Built once so no branch can accidentally
 #: return a more helpful one.
 INVALID_CREDENTIALS = "invalid authentication credentials"
+
+#: The tenant credential has its own header so it can coexist with a Clerk JWT.
+TENANT_API_KEY_HEADER = "X-Graphrag-API-Key"
 
 #: Seconds of clock skew tolerated on ``exp`` and ``iat``.
 #:
@@ -177,8 +183,18 @@ def bearer_token(request: Request) -> str | None:
 
 
 def api_key_from(request: Request) -> str | None:
-    """The API key, from ``Authorization: Bearer <key>``, or ``None``."""
-    return bearer_token(request)
+    """The tenant key, or ``None``.
+
+    A dedicated header wins in every mode. The legacy bearer transport is
+    accepted only when Clerk verification is off, because in that mode the
+    bearer slot cannot contain a session JWT.
+    """
+    explicit = (request.headers.get(TENANT_API_KEY_HEADER) or "").strip()
+    if explicit:
+        return explicit
+    if not CLERK_ENABLED:
+        return bearer_token(request)
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -433,5 +449,6 @@ __all__ = [
     "reset_unconfigured_warning",
     "resolve_org",
     "set_control_plane",
+    "TENANT_API_KEY_HEADER",
     "verify_session_token",
 ]

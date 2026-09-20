@@ -87,6 +87,7 @@ class TraceRecord:
     execution_plan: dict[str, Any]
     graph_payload: Any
     created_at: datetime
+    graph_id: str | None = None
 
 
 # --------------------------------------------------------------------------
@@ -202,8 +203,9 @@ def list_traces(
             session_id=row.session_id,
             query=row.query,
             execution_plan=row.execution_plan,
-            graph_payload=row.graph_payload,
+            graph_payload=_graph_results(row.graph_payload),
             created_at=row.created_at,
+            graph_id=_graph_id(row.graph_payload),
         )
         for row in rows
     ]
@@ -247,6 +249,7 @@ def persist_trace(
     execution_plan: dict[str, Any],
     graph_payload: Any,
     *,
+    graph_id: str | None = None,
     engine: Engine | None = None,
 ) -> str | None:
     """Write one trace. Returns its identifier, or ``None`` if it was lost.
@@ -258,11 +261,14 @@ def persist_trace(
     try:
         made = engine if engine is not None else create_history_engine()
         with history_sessions(made)() as db:
+            stored_payload = graph_payload
+            if graph_id:
+                stored_payload = {"results": graph_payload, "graph_id": graph_id}
             trace = TraceLog(
                 session_id=session_id,
                 query=query,
                 execution_plan=execution_plan,
-                graph_payload=graph_payload,
+                graph_payload=stored_payload,
             )
             db.add(trace)
             db.commit()
@@ -270,6 +276,21 @@ def persist_trace(
     except Exception:  # noqa: BLE001 - history must not break a query
         logger.warning("could not record a trace for %s", session_id, exc_info=True)
         return None
+
+
+def _graph_id(payload: Any) -> str | None:
+    """The graph recorded in a wrapped payload, absent on legacy traces."""
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("graph_id")
+    return value if isinstance(value, str) and value else None
+
+
+def _graph_results(payload: Any) -> Any:
+    """Expose the original result payload while keeping provenance internal."""
+    if isinstance(payload, dict) and "graph_id" in payload and "results" in payload:
+        return payload["results"]
+    return payload
 
 
 # --------------------------------------------------------------------------
