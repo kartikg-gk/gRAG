@@ -373,7 +373,26 @@ export function StudioProvider({ children, identity = { userId: null, email: nul
   useEffect(() => { void loadSessionsNow(); }, [loadSessionsNow]);
 
   const hydrateRecord = useCallback(async (record: TraceRecord, epoch: number) => {
+    let restoringGraph = false;
     try {
+      if (record.graph_id && record.graph_id !== activeGraphId) {
+        if (!graphs.some((graph) => graph.id === record.graph_id)) {
+          throw new Error(`The graph used by this trace is unavailable: ${record.graph_id}`);
+        }
+        restoringGraph = true;
+        graphSwitchingRef.current = true;
+        setGraphSwitching(true);
+        const confirmed = await switchGraphApi(record.graph_id);
+        if (epoch !== queryEpoch.current) return;
+        setActiveGraphId(confirmed.active);
+        setGraphs((current) => current.map((graph) => ({
+          ...graph,
+          active: graph.id === confirmed.active,
+        })));
+        safeWrite(ACTIVE_GRAPH_KEY, confirmed.active);
+        setGraphError(null);
+        void loadSuggestionsNow();
+      }
       const hydrated = await hydrateTraceFromLog(record);
       if (epoch !== queryEpoch.current) return;
       setTrace(hydrated);
@@ -382,14 +401,18 @@ export function StudioProvider({ children, identity = { userId: null, email: nul
       if (epoch !== queryEpoch.current) return;
       console.error("[graphRAG] History hydration failed", error);
       setTrace(EMPTY_TRACE);
-      toast.error("This trace cannot be restored on the active graph.");
+      toast.error(error instanceof Error ? error.message : "This trace cannot be restored.");
     } finally {
+      if (restoringGraph) {
+        graphSwitchingRef.current = false;
+        setGraphSwitching(false);
+      }
       if (epoch === queryEpoch.current) {
         retrievingRef.current = false;
         setRetrieving(false);
       }
     }
-  }, [navigate]);
+  }, [activeGraphId, graphs, loadSuggestionsNow, navigate]);
 
   const selectSession = useCallback(async (id: string) => {
     if (graphSwitchingRef.current || !historyEnabled || !sessions.some((session) => session.id === id)) return;

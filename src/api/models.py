@@ -91,6 +91,7 @@ class TraceRead(ContractModel):
     execution_plan: dict
     graph_payload: dict | list
     created_at: datetime
+    graph_id: str | None = None
 
 
 class ResultDocumentRead(ContractModel):

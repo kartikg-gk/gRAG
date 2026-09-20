@@ -280,6 +280,14 @@ def engine_for(request: Request, org_id: str):
     return engine
 
 
+def _loaded_graph_id(org_id: str) -> str | None:
+    """The file identity of the graph that currently answers for ``org_id``."""
+    entry = REGISTRY.entry(org_id)
+    if entry is None and not auth_module.MULTI_TENANCY_ENABLED:
+        entry = REGISTRY.entry(DEFAULT_TENANT_ORG_ID)
+    return Path(entry.path).name if entry is not None else None
+
+
 def _same_file(left, right) -> bool:
     """Whether two paths name the same file, comparing resolved forms."""
     try:
@@ -627,6 +635,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
                 query=req.query,
                 execution_plan=payload["trace_log"],
                 graph_payload=payload["results"],
+                graph_id=_loaded_graph_id(org_id),
             )
         return payload
 

@@ -138,14 +138,15 @@ export interface TraceRecord {
   execution_plan: ApiTraceLog;
   graph_payload: ApiResult[] | Record<string, unknown>;
   created_at: string;
+  graph_id?: string | null;
 }
 
 async function headersFor(init: RequestInit): Promise<Headers> {
   const headers = new Headers(init.headers);
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
   const token = await getAuthToken();
-  const bearer = token || API_KEY;
-  if (bearer) headers.set("Authorization", `Bearer ${bearer}`);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (API_KEY) headers.set("X-Graphrag-API-Key", API_KEY);
   return headers;
 }
 
