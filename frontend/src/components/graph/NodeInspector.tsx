@@ -118,11 +118,15 @@ export function NodeInspector({ node, activeGraphId, maxHeight, onClose }: NodeI
       <div className="inspector-grid min-h-0 flex-1 overflow-y-auto scrollbar-thin">
         <section className="inspector-section">
           <h3 className="inspector-title"><BarChart3 size={16} /> Scores</h3>
-          <dl className="space-y-2 text-sm">
-            {scores.map(([label, value, primary]) => value === undefined ? null : (
-              <div key={label} className="flex justify-between gap-3"><dt className="text-ink-dim">{label}</dt><dd className={cn("font-mono text-ink", primary && "text-green")}>{value.toFixed(3)}</dd></div>
-            ))}
-          </dl>
+          {scores.every(([, value]) => value === undefined)
+            ? <p className="text-sm text-ink-dim">Not ranked — reached as a neighbour of a ranked node</p>
+            : (
+              <dl className="space-y-2 text-sm">
+                {scores.map(([label, value, primary]) => value === undefined ? null : (
+                  <div key={label} className="flex justify-between gap-3"><dt className="text-ink-dim">{label}</dt><dd className={cn("font-mono text-ink", primary && "text-green")}>{value.toFixed(3)}</dd></div>
+                ))}
+              </dl>
+            )}
         </section>
         <section className="inspector-section">
           <h3 className="inspector-title"><FileText size={16} /> Summary</h3>
