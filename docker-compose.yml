@@ -1,10 +1,42 @@
-# Services this project needs running locally.
+# Services this project runs in containers.
 #
-# Redis only, for now. The database the control plane lives in is configured
-# separately as a local instance and is deliberately not here: a second,
-# containerised one would be a second control plane on the same machine, and
-# whichever process read the wrong one would be quietly serving from a fleet
-# that does not exist.
+#   docker compose up -d                  Redis only, for local development.
+#   docker compose --profile stack up     The whole platform: Postgres, Redis,
+#                                         API, worker and scheduler.
+#
+# The two are kept apart on purpose. Development points at a database set up
+# separately, and starting a second, containerised one beside it would be a
+# second control plane on the same machine: whichever process read the wrong
+# one would quietly serve from a fleet that does not exist. The stack is for
+# running the platform whole, with its own database and nothing local.
+#
+# The stack's database listens on POSTGRES_PORT (default 5432). If a local
+# Postgres already holds that port, set POSTGRES_PORT to another one.
+
+x-app: &app
+  build: .
+  image: graphrag-backend:latest
+  env_file:
+    - path: .env
+      required: false
+  environment: &app-env
+    # One Postgres database holds the control plane, the graph store and the
+    # history, through the general URL.
+    GRAPHRAG_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/graphrag
+    GRAPHRAG_CONTROL_PLANE_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/graphrag
+    # Redis is the queue's broker and the debounce store.
+    GRAPHRAG_REDIS_URL: redis://redis:6379/0
+    GRAPHRAG_MULTI_TENANCY_ENABLED: "1"
+    # Artifacts: a shared volume by default; set GRAPHRAG_ARTIFACT_BACKEND=s3
+    # and the bucket and region in .env for S3.
+    GRAPHRAG_ARTIFACT_BACKEND: ${GRAPHRAG_ARTIFACT_BACKEND:-local}
+  depends_on:
+    db: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  volumes:
+    - artifacts:/home/app/data/artifacts
+  restart: unless-stopped
+
 services:
   redis:
     image: redis:7-alpine
@@ -21,3 +53,54 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  db:
+    profiles: [stack]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: graphrag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-graphrag}
+      POSTGRES_DB: graphrag
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U graphrag -d graphrag"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    <<: *app
+    profiles: [stack]
+    environment:
+      <<: *app-env
+      GRAPHRAG_POD_ID: pod-local-1
+      # The pod agent registers this pod at boot, so onboarding has a pod to
+      # assign a new tenant to.
+      GRAPHRAG_POD_AGENT: "1"
+    ports:
+      - "8000:8000"
+    volumes:
+      - artifacts:/home/app/data/artifacts
+      - graphs:/home/app/data/graphs
+
+  worker:
+    <<: *app
+    profiles: [stack]
+    # Threads, not the default prefork pool: the graph engine and the model
+    # must not be forked.
+    command: ["celery", "-A", "graphrag.worker.app", "worker", "--loglevel=info", "-P", "threads", "-Q", "graphrag"]
+
+  beat:
+    <<: *app
+    profiles: [stack]
+    command: ["celery", "-A", "graphrag.worker.app", "beat", "--loglevel=info"]
+    volumes: []
+
+volumes:
+  postgres_data:
+  artifacts:
+  graphs:
