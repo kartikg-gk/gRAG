@@ -53,6 +53,7 @@ has already been shown the trace and an absent summary is not a failed page.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -313,6 +314,20 @@ def general_client():
     return _llm["client"]
 
 
+def _summary_key(key: str | None, text: str) -> str:
+    """The cache key for a summary: the caller's key and a digest of the text.
+
+    The caller's key alone is not enough. It is usually a node id, one cache
+    serves every tenant in the process, and tenant graphs share ids — two
+    organisations that both mention the same service have the same entity id.
+    Keyed by id alone, one tenant's summary of its own text would be served
+    to another. With the text in the key, a hit can only return a summary of
+    the text the caller sent.
+    """
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return f"{key or ''}#{digest}"
+
+
 def _answer_key(query: str, context: str) -> str:
     return f"{query}\n#{hash(context)}"
 
@@ -444,10 +459,11 @@ def summarize(
     req: SummarizeRequest,
     _user: str = Depends(get_current_user),
 ) -> dict:
-    """A one-sentence summary of a note, remembered per key."""
-    key = req.key or req.text[:64]
+    """A one-sentence summary of a note, remembered per key and text."""
     text = (req.text or "").strip()
-    return _cached_completion(SUMMARY_CACHE, key, SUMMARY_PROMPT + text if text else None, "summary")
+    if not text:
+        return {"summary": "", "cached": False}
+    return _cached_completion(SUMMARY_CACHE, _summary_key(req.key, text), SUMMARY_PROMPT + text, "summary")
 
 
 @model_router.post(
