@@ -115,6 +115,10 @@ class RetrievalRouter:
     def _embed(self, text: str) -> list[float]:
         return _executor().submit(self.embedder.vector, text).result()
 
+    def embed_query(self, text: str) -> list[float]:
+        """A query's vector, through the same bounded pool retrieval uses."""
+        return self._embed(text)
+
     def _vector_hits(self, query: str, meta: dict[str, dict]) -> list[tuple[str, float]]:
         vector = self._embed(query)
         try:

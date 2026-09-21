@@ -305,6 +305,34 @@ SEED_TOP_N = _env_int("GRAPHRAG_GRAPH_SEED_TOP_N", 3)
 #: because the other half is broad.
 MAX_DEGREE = _env_int("GRAPHRAG_MAX_DEGREE", 10)
 
+# --------------------------------------------------------------------------
+# Agent tools
+#
+# Bounds on what one tool call may return, so an agent working the graph step
+# by step can neither walk all of it nor pull every document in one call.
+# --------------------------------------------------------------------------
+
+#: Ceiling on how far one impact trace walks, whatever the caller asks for.
+TOOL_MAX_HOPS = _env_int("GRAPHRAG_TOOL_MAX_HOPS", 4)
+#: Most entities one impact trace returns.
+TOOL_MAX_IMPACT = _env_int("GRAPHRAG_TOOL_MAX_IMPACT", 50)
+#: Most candidates one entity lookup returns.
+TOOL_MAX_CANDIDATES = _env_int("GRAPHRAG_TOOL_MAX_CANDIDATES", 10)
+#: Source documents attached to each returned entity.
+TOOL_CITATIONS_PER_NODE = _env_int("GRAPHRAG_TOOL_CITATIONS_PER_NODE", 2)
+#: Characters of each document returned: a snippet to cite, not the document.
+TOOL_SNIPPET_CHARS = _env_int("GRAPHRAG_TOOL_SNIPPET_CHARS", 280)
+#: Neighbours taken per node on each hop of an impact trace. Wider than the
+#: retrieval arm's, because an impact question wants the whole neighbourhood.
+TOOL_NEIGHBOR_K = _env_int("GRAPHRAG_TOOL_NEIGHBOR_K", 25)
+#: Hub threshold on the first hop only, where the node asked about is often a
+#: hub itself. Later hops keep MAX_DEGREE, so a hub further out cannot explode
+#: the walk.
+TOOL_SEED_MAX_DEGREE = _env_int("GRAPHRAG_TOOL_SEED_MAX_DEGREE", 200)
+#: Below this similarity a name does not resolve at all, so a trace never
+#: starts from a weak guess.
+TOOL_RESOLVE_MIN_SIM = _env_float("GRAPHRAG_TOOL_RESOLVE_MIN_SIM", 0.40)
+
 #: How many results each arm returns. Separate constants because the two arms
 #: are measured against each other and a shared value would make a difference
 #: in their result counts impossible to attribute.
