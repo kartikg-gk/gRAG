@@ -12,7 +12,11 @@ dependency because this exists.
 
 from __future__ import annotations
 
+import logging
+
 from . import agent_tools
+
+logger = logging.getLogger("graphrag.tools_langchain")
 
 TRACE_IMPACT = """Find everything connected to one entity in the repository graph \
 — a PR, issue, person, file or module — ranked by how strongly it is connected.
@@ -65,9 +69,22 @@ score (1.0 for exact, similarity otherwise) — pass a candidate's label to \
 trace_impact as entity_name; match_count, how many were found."""
 
 
-def graph_tools(engine) -> list:
-    """The three tools, bound to one engine's graph."""
+def graph_tools(engine, *, warm: bool = True) -> list:
+    """The three tools, bound to one engine's graph.
+
+    Warms the engine first, the same way the API does at startup: the first
+    query vector is computed on a fresh worker thread and pays the model's
+    one-time setup, measured at 25 s. Paying it here, once, keeps it off the
+    first tool call. A warm-up that fails leaves the tools working, only
+    slower on their first call.
+    """
     from langchain_core.tools import StructuredTool
+
+    if warm:
+        try:
+            engine.warm()
+        except Exception:  # noqa: BLE001 - cold is slower, not fatal
+            logger.warning("tool warm-up failed; the first call will be slow", exc_info=True)
 
     def trace_impact(entity_name: str, max_hops: int = 3) -> dict:
         return agent_tools.trace_impact(engine, entity_name, max_hops)
