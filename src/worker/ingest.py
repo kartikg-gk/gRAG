@@ -111,6 +111,16 @@ def slugify(text: str) -> str:
     return slug or EMPTY_SLUG
 
 
+def _iso(moment: Any) -> str | None:
+    """A time as ISO text, for a JSON column. The fetcher hands back datetimes;
+    a payload read elsewhere may already carry the string."""
+    if moment is None:
+        return None
+    if isinstance(moment, datetime):
+        return moment.isoformat()
+    return str(moment)
+
+
 def item_node_id(repo_id: str, kind: str, number: int | str) -> str:
     """The identifier for a pull request or an issue."""
     return f"{repo_id}:{kind.lower()}:{number}"
@@ -255,6 +265,11 @@ def ingest_repository(
                 "author": author,
                 "source_id": _field(item, "id"),
                 "merged": _merged(item),
+                # The prose and when it was written, for the compiled graph:
+                # the body becomes the item's source document, and the time
+                # its timestamp, which is what recency ranks by.
+                "body": body,
+                "created_at": _iso(_field(item, "created_at")),
             },
             # The prose, not the display name. Every item in a repository has
             # a name of the same shape, so embedding names would put them all

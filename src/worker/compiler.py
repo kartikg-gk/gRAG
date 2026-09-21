@@ -42,12 +42,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
 from sqlmodel import Session, select
 
-from ..common.relations import CONFIDENCE, RELATION_CO_OCCURS
+from ..common.relations import CONFIDENCE, RELATION_CO_OCCURS, RELATION_MENTIONS
 from ..models.graph_store import EntityEdge, EntityNode
 
 logger = logging.getLogger("graphrag.worker.compiler")
@@ -77,6 +78,34 @@ class CompiledArtifact:
     path: Path
     entities: int
     edges: int
+    documents: int = 0
+
+
+def document_id(node_id: str) -> str:
+    """The id of the source document an item's text is stored under."""
+    return f"{node_id}:doc"
+
+
+def _document_text(properties: dict) -> str:
+    """An item's title and body as one text, or nothing when it has neither."""
+    title = (properties.get("title") or "").strip()
+    body = (properties.get("body") or "").strip()
+    return "\n\n".join(part for part in (title, body) if part)
+
+
+def _created_at(properties: dict) -> datetime | None:
+    """When the item was written, or ``None`` when that was not recorded.
+
+    ``None`` rather than a guess: recency treats an unknown time as neutral,
+    and rows written before this was recorded carry none.
+    """
+    value = properties.get("created_at")
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def edge_confidence(relation: str | None, weight: float | None) -> float:
@@ -104,8 +133,11 @@ def compile_artifact(
     What the artifact contains
     --------------------------
 
-    Every entity this organisation has accumulated, with its label, type and
-    vector; and every relationship between them, with its weight.
+    Every entity this organisation has accumulated, with its label, type,
+    vector and — for an item — when it was written; every relationship between
+    them, with its weight; and each item's title and body as a source document,
+    linked to the item and to every entity it mentions, so an answer has the
+    text behind a node and not only its name.
 
     Each relationship keeps its kind. The rows record two — authorship and
     mention — and each reaches the artifact under its own relation, so a
@@ -135,18 +167,31 @@ def compile_artifact(
     store = open_context_graph(destination)
     entities = 0
     edges = 0
+    documents = 0
 
     try:
         # Every node before any edge: an edge whose target has not been
         # written yet has nothing to attach to.
         for node in _stream(db, EntityNode, EntityNode.node_id, org_id, batch_size):
+            properties = node.properties or {}
             store.upsert_entity(
                 node.node_id,
                 node.name,
                 node.label,
+                timestamp=_created_at(properties),
                 embedding=node.embedding,
             )
             entities += 1
+            text = _document_text(properties)
+            if text:
+                document = document_id(node.node_id)
+                store.upsert_document(
+                    document, properties.get("url") or node.node_id, text
+                )
+                # The item's own text answers for the item itself, which is
+                # what the vector arm finds first.
+                store.add_mention(document, node.node_id)
+                documents += 1
 
         for edge in _stream(db, EntityEdge, EntityEdge.edge_id, org_id, batch_size):
             store.upsert_relationship(
@@ -155,6 +200,10 @@ def compile_artifact(
                 edge.relation_type or ARTIFACT_RELATION,
                 confidence=edge_confidence(edge.relation_type, edge.weight),
             )
+            if edge.relation_type == RELATION_MENTIONS:
+                # The text that named the entity, as its evidence. A no-op
+                # when the source wrote no document.
+                store.add_mention(document_id(edge.source_id), edge.target_id)
             edges += 1
 
         if entities:
@@ -175,7 +224,9 @@ def compile_artifact(
         edges,
         destination,
     )
-    return CompiledArtifact(path=destination, entities=entities, edges=edges)
+    return CompiledArtifact(
+        path=destination, entities=entities, edges=edges, documents=documents
+    )
 
 
 def _stream(
