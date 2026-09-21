@@ -34,3 +34,5 @@ build/
 dist/
 *.egg-info/
 builds/
+# What `graphrag trace` writes by default.
+trace_out/
