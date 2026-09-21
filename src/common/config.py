@@ -537,6 +537,18 @@ JUDGE_FAST_KEY_VAR = "GRAPHRAG_JUDGE_FAST_KEY"
 #: endpoint takes the question instead.
 JUDGE_TIMEOUT_SECONDS = _env_float("GRAPHRAG_JUDGE_TIMEOUT_SECONDS", 2.0)
 
+#: Seconds one attempt at an answer or a summary may take before it is
+#: abandoned.
+#:
+#: **Chosen, not measured.** Without it the client waits as long as the library
+#: lets it — ten minutes — and a provider that stops responding holds a request,
+#: and a worker thread, for all of that. Long enough for a slow model to finish
+#: a full answer; a stream only needs each piece to arrive inside it. Applies
+#: per attempt, and the library's own retries still run, so the worst case is
+#: a small multiple of this. The routes already turn the error into their
+#: failure answer.
+ANSWER_TIMEOUT_SECONDS = _env_float("GRAPHRAG_ANSWER_TIMEOUT_SECONDS", 60.0)
+
 #: Tokens the query question may spend. **Chosen**: the answer is one word, and
 #: a cap this tight means a model that starts explaining itself is cut off
 #: rather than paid for. The reply is read by prefix, so a truncated word still
