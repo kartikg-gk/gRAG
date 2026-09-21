@@ -58,13 +58,11 @@ logger = logging.getLogger("graphrag.worker.compiler")
 #: memory whatever the tenant's size.
 BATCH_SIZE = 1000
 
-#: The relation every edge in a compiled artifact carries.
+#: The relation an edge is written under when its row records no kind.
 #:
-#: The rows being read record two relation types, and **neither reaches the
-#: artifact** — see ``compile_artifact``. This is the generic relation the
-#: store already reserves for a link whose kind is not being claimed, and its
-#: weight is the lowest in the vocabulary, which is the correct price for an
-#: edge whose kind was not preserved.
+#: The generic relation the store already reserves for a link whose kind is
+#: not being claimed, and the lowest-weighted in the vocabulary — the correct
+#: price for an edge whose kind is unknown.
 ARTIFACT_RELATION = "CO_OCCURS"
 
 #: The store itself and every sidecar a previous build may have left beside it.
@@ -95,12 +93,11 @@ def compile_artifact(
     Every entity this organisation has accumulated, with its label, type and
     vector; and every relationship between them, with its weight.
 
-    **What it does not contain is the kind of each relationship.** The rows
-    record two — authorship and mention — and every edge is written into the
-    store under one generic relation, told apart only by weight. That is
-    deliberate and is not an oversight to be repaired: a reader who traverses
-    a compiled artifact is reading a weighted graph, not a typed one, and the
-    types live in the database the artifact was built from.
+    Each relationship keeps its kind. The rows record two — authorship and
+    mention — and each reaches the artifact under its own relation, with its
+    own weight, so a tenant graph can be read the way a locally built one is:
+    by what connects two things, not only by how strongly. An edge with no
+    recorded kind is written under the generic relation.
 
     Anything already at ``output_path`` is removed first, so the result is a
     snapshot of the graph store rather than a merge with whatever was there
@@ -135,7 +132,7 @@ def compile_artifact(
             store.upsert_relationship(
                 edge.source_id,
                 edge.target_id,
-                ARTIFACT_RELATION,
+                edge.relation_type or ARTIFACT_RELATION,
                 confidence=edge.weight,
             )
             edges += 1
