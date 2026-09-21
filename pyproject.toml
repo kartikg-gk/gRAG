@@ -161,11 +161,15 @@ graphrag-view = "graphrag.tracing.viewer:main"
 package-dir = { "graphrag" = "src" }
 packages = [
     "graphrag",
+    "graphrag.analysis",
     "graphrag.api",
     "graphrag.common",
+    "graphrag.graphdb",
     "graphrag.models",
     "graphrag.ingestion",
     "graphrag.knowledge",
+    "graphrag.repository",
+    "graphrag.retrieval",
     "graphrag.tracing",
     "graphrag.worker",
 ]
