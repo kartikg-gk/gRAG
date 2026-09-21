@@ -675,11 +675,34 @@ def create_app(*, engine_factory=None) -> FastAPI:
     # and change which one this process serves. They operate on the default
     # tenant only and are deliberately unauthenticated — a local developer
     # affordance, recorded here as a choice rather than an oversight.
+    #
+    # With tenancy on, the local files are not what anyone is served, so the
+    # list is the caller's own graph and nothing else, and switching is off:
+    # it would swap a file from this checkout in under the default tenant for
+    # anyone who asked, with no credential.
     # ----------------------------------------------------------------------
 
     @app.get("/api/graphs", response_model=GraphsRead)
-    def graphs(request: Request) -> dict:
-        """Every graph this checkout can serve, and which one is active."""
+    def graphs(
+        request: Request,
+        org_id: str = Depends(get_current_tenant_org),
+    ) -> dict:
+        """Every graph this checkout can serve, and which one is active.
+
+        With tenancy on: the caller's organisation's graph, if this pod holds
+        it, as the one active entry; an empty list if it does not.
+        """
+        if auth_module.MULTI_TENANCY_ENABLED:
+            entry = REGISTRY.entry(org_id)
+            if entry is None:
+                return {"graphs": [], "active": None}
+            graph_id = Path(entry.path).name
+            label = f"Version {entry.version}" if entry.version else graph_id
+            return {
+                "graphs": [{"id": graph_id, "label": label, "active": True}],
+                "active": graph_id,
+            }
+
         active_path = getattr(request.app.state, "active_path", None)
         listed = [
             {
@@ -702,6 +725,12 @@ def create_app(*, engine_factory=None) -> FastAPI:
         default tenant in the same call. Summaries are dropped, because they
         describe the previous graph.
         """
+        if auth_module.MULTI_TENANCY_ENABLED:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="switching graphs is only available with tenancy off",
+            )
+
         registry = REGISTRY
 
         match = next((path for path in graph_paths() if path.name == req.id), None)
@@ -735,7 +764,19 @@ def create_app(*, engine_factory=None) -> FastAPI:
     @app.get("/api/health", response_model=HealthRead)
     def health(request: Request) -> dict:
         """Unauthenticated on purpose: a readiness probe that needs a
-        credential cannot report that credentials are misconfigured."""
+        credential cannot report that credentials are misconfigured.
+
+        With tenancy on, the nodes are those of every tenant graph this pod
+        holds; the local store it opened at startup serves nobody, and
+        counting it would report an empty pod as the healthy one.
+        """
+        if auth_module.MULTI_TENANCY_ENABLED:
+            nodes = 0
+            for key in REGISTRY.keys():
+                engine = REGISTRY.get(key) if key != DEFAULT_TENANT_ORG_ID else None
+                if engine is not None:
+                    nodes += engine.store.count_nodes()
+            return {"status": "ok", "nodes": nodes}
         engine = REGISTRY.get(DEFAULT_TENANT_ORG_ID)
         return {"status": "ok", "nodes": engine.store.count_nodes()}
 
