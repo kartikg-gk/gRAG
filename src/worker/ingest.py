@@ -55,17 +55,19 @@ from typing import Any, Callable, Iterable, Optional
 
 from sqlmodel import Session
 
+from ..common.relations import RELATION_AUTHORED_BY, RELATION_MENTIONS
 from ..models.graph_store import ensure_graph_store_schema, upsert_edges, upsert_nodes
 
 logger = logging.getLogger("graphrag.worker.ingest")
 
-#: The two relations this path records.
+#: The two relations this path records, named and priced in the shared
+#: vocabulary. These are the two *this* path can tell apart from a title and a
+#: body; see the module docstring: the richer set lives on the other path.
 #:
-#: Named here rather than taken from the serving side's vocabulary, because
-#: these are the two *this* path can actually tell apart from a title and a
-#: body. See the module docstring: the richer set lives on the other path.
-RELATION_AUTHORED = "AUTHORED_BY"
-RELATION_MENTIONS = "MENTIONS"
+#: What this path writes as an edge's weight is how sure it is the edge exists
+#: — 1.0 for authorship, the extractor's score for a mention. What the relation
+#: is worth is applied when the artifact is compiled.
+RELATION_AUTHORED = RELATION_AUTHORED_BY
 
 #: What a node identifier starts with, by what the node is.
 PERSON_PREFIX = "person"
