@@ -300,14 +300,16 @@ def general_client():
     """The general judge client and its model, built once.
 
     Raises when the judge is not configured; each route turns that into its
-    own failure answer.
+    own failure answer, and a timeout is one more such failure. Bounded, so a
+    provider that stops responding cannot hold a request open indefinitely.
     """
-    from ..common.config import JUDGE_MODEL
+    from ..common.config import ANSWER_TIMEOUT_SECONDS, JUDGE_MODEL
     from ..common.judge import _required, chat_client
 
     if "client" not in _llm:
         model = _required(JUDGE_MODEL, "GRAPHRAG_JUDGE_MODEL")
-        _llm["client"] = (chat_client(), model)
+        client = chat_client().with_options(timeout=ANSWER_TIMEOUT_SECONDS)
+        _llm["client"] = (client, model)
     return _llm["client"]
 
 
