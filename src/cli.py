@@ -160,6 +160,13 @@ def _ingest(args: argparse.Namespace, session: httpx.Client | None) -> int:
     return 0
 
 
+def _trace(args: argparse.Namespace, session: httpx.Client | None) -> int:
+    """Fetch, run a traced agent, and write both the trace and its canvas form."""
+    from .github_trace import run
+
+    return run(args)
+
+
 def _view(args: argparse.Namespace, session: httpx.Client | None) -> int:
     """Render a saved trace.
 
@@ -367,6 +374,17 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     view.set_defaults(handler=_view)
+
+    trace = commands.add_parser(
+        "trace",
+        help="fetch a repository, run a traced agent over it, and write the run out",
+    )
+    # The arguments live beside the command's implementation; importing that
+    # module needs nothing beyond the standard library until it runs.
+    from .github_trace import add_arguments as _trace_arguments
+
+    _trace_arguments(trace)
+    trace.set_defaults(handler=_trace)
 
     return parser
 
