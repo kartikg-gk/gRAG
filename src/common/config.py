@@ -10,7 +10,8 @@ they mirror the API and are a deliberately separate vocabulary.
 
 Names here generally arrive with the code that emits them, because a declared
 constant with no producer reads as a shipped feature. ``RELATION_CO_OCCURS`` is
-the one exception, and it is deliberate — see the note beside it.
+the one exception, and it is deliberate — see the note beside it in
+``relations``.
 """
 
 from __future__ import annotations
@@ -35,55 +36,31 @@ NODE_COMMIT = "Commit"
 NODE_FILE = "File"
 
 # --------------------------------------------------------------------------
-# Relations
-# --------------------------------------------------------------------------
-
-RELATION_AUTHORED = "AUTHORED"
-RELATION_RESOLVES = "RESOLVES"
-RELATION_REVIEWED = "REVIEWED"
-RELATION_TOUCHES = "TOUCHES"
-RELATION_PART_OF = "PART_OF"
-RELATION_REPORTED = "REPORTED"
-
-#: Text proximity: two entities mentioned near each other.
-#:
-#: **Declared but never emitted.** Nothing produces a CO_OCCURS edge yet. The
-#: constant and its weight are declared anyway so the relation vocabulary is
-#: complete: a scorer added later needs a name and a price already agreed, and
-#: choosing the price at the moment of the first producer means choosing it
-#: under pressure to make that producer's output look reasonable.
-#:
-#: If something starts emitting these, the weight below is what makes them lose
-#: to every structural relation: a proximity guess must never outrank an
-#: authorship fact.
-RELATION_CO_OCCURS = "CO_OCCURS"
-
-# --------------------------------------------------------------------------
-# Confidence
+# Relations and confidence
 #
-# How much each relation is worth, so downstream scoring has something to
-# multiply. Structure earns more than inference.
+# Defined in ``relations`` so the compile path can read them without these
+# settings; re-exported here for everything else.
 # --------------------------------------------------------------------------
 
-CONFIDENCE = {
-    RELATION_AUTHORED: 0.95,
-    RELATION_RESOLVES: 0.92,
-    RELATION_REVIEWED: 0.85,
-    RELATION_TOUCHES: 0.80,
-    RELATION_PART_OF: 0.80,
-    RELATION_REPORTED: 0.75,
-    # Weakest by a wide margin, and below every structural relation above.
-    RELATION_CO_OCCURS: 0.35,
-}
+from .relations import (  # noqa: E402
+    RELATION_AUTHORED,
+    RELATION_RESOLVES,
+    RELATION_REVIEWED,
+    RELATION_TOUCHES,
+    RELATION_PART_OF,
+    RELATION_REPORTED,
+    RELATION_CO_OCCURS,
+    RELATION_AUTHORED_BY,
+    RELATION_MENTIONS,
+    CONFIDENCE,
+)
 
 # --------------------------------------------------------------------------
 # Entity extraction
 #
-# The extractor reads text and returns entities. It does not build edges, and
-# there is deliberately no relation weight for a mention here: what an
-# extracted entity is worth depends on a scorer that does not exist yet, and a
-# weighted constant with no producer reads as a shipped feature. The edge these
-# entities earn gets chosen when there is a baseline to measure it against.
+# The extractor reads text and returns entities. It does not build edges; the
+# edge an extracted entity earns is ``MENTIONS``, priced above with the rest,
+# and the extractor's own score rides on it as how sure the match was.
 # --------------------------------------------------------------------------
 
 # Labels the extractor can produce. Three of them are the node labels above,

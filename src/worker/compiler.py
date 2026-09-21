@@ -47,6 +47,7 @@ from typing import Iterator
 
 from sqlmodel import Session, select
 
+from ..common.relations import CONFIDENCE, RELATION_CO_OCCURS
 from ..models.graph_store import EntityEdge, EntityNode
 
 logger = logging.getLogger("graphrag.worker.compiler")
@@ -63,7 +64,7 @@ BATCH_SIZE = 1000
 #: The generic relation the store already reserves for a link whose kind is
 #: not being claimed, and the lowest-weighted in the vocabulary — the correct
 #: price for an edge whose kind is unknown.
-ARTIFACT_RELATION = "CO_OCCURS"
+ARTIFACT_RELATION = RELATION_CO_OCCURS
 
 #: The store itself and every sidecar a previous build may have left beside it.
 STALE_SUFFIXES = ("", ".wal", "-shm", ".tmp")
@@ -76,6 +77,19 @@ class CompiledArtifact:
     path: Path
     entities: int
     edges: int
+
+
+def edge_confidence(relation: str | None, weight: float | None) -> float:
+    """What traversal multiplies by for one row: its relation's price times
+    how sure ingest was of it.
+
+    The same prices the locally built graph uses, so the two kinds of graph
+    score alike. A relation the vocabulary does not price is charged the
+    generic relation's, the lowest there is.
+    """
+    price = CONFIDENCE.get(relation or ARTIFACT_RELATION, CONFIDENCE[ARTIFACT_RELATION])
+    evidence = 1.0 if weight is None else float(weight)
+    return price * evidence
 
 
 def compile_artifact(
@@ -94,10 +108,16 @@ def compile_artifact(
     vector; and every relationship between them, with its weight.
 
     Each relationship keeps its kind. The rows record two — authorship and
-    mention — and each reaches the artifact under its own relation, with its
-    own weight, so a tenant graph can be read the way a locally built one is:
-    by what connects two things, not only by how strongly. An edge with no
-    recorded kind is written under the generic relation.
+    mention — and each reaches the artifact under its own relation, so a
+    tenant graph can be read the way a locally built one is: by what connects
+    two things, not only by how strongly. An edge with no recorded kind is
+    written under the generic relation.
+
+    A row's weight is how sure ingest was that the edge exists; the artifact's
+    confidence is what traversal multiplies by. The second is the first priced
+    by its relation — see :func:`edge_confidence`. Without that, every edge
+    ingest was sure of reaches the artifact at 1.0 and every path through the
+    graph scores the same.
 
     Anything already at ``output_path`` is removed first, so the result is a
     snapshot of the graph store rather than a merge with whatever was there
@@ -133,7 +153,7 @@ def compile_artifact(
                 edge.source_id,
                 edge.target_id,
                 edge.relation_type or ARTIFACT_RELATION,
-                confidence=edge.weight,
+                confidence=edge_confidence(edge.relation_type, edge.weight),
             )
             edges += 1
 
