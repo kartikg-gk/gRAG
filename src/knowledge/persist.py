@@ -47,7 +47,7 @@ what lets a caller time them separately.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Protocol
 
 from ..common.config import (
@@ -203,6 +203,7 @@ def persist(
     embedder: Embedder | None = None,
     extractor: Extractor | None = None,
     documents: Iterable[Any] = (),
+    resolver=None,
 ) -> PersistStats:
     """Write every node, edge, document and mention into ``store``.
 
@@ -214,6 +215,11 @@ def persist(
     Idempotent by construction: every write goes through ``MERGE``, so running
     this twice over the same build leaves the same row counts. Asserted by
     ``test_re_ingesting_the_same_source_does_not_multiply_edges``.
+
+    ``resolver`` folds each extracted entity into one already seen when they
+    are variants of the same thing — merged outright when nearly identical,
+    put to its judge in the band between, kept apart otherwise. Without one,
+    each spelling is its own entity.
     """
     stats = PersistStats()
 
@@ -243,13 +249,13 @@ def persist(
         stats.relationships += 1
         stats.per_relation[edge["type"]] = stats.per_relation.get(edge["type"], 0) + 1
 
-    _write_documents(store, builder, documents, extractor, embedder, stats)
+    _write_documents(store, builder, documents, extractor, embedder, stats, resolver)
 
     return stats
 
 
 def _write_documents(
-    store, builder, documents, extractor, embedder, stats: PersistStats
+    store, builder, documents, extractor, embedder, stats: PersistStats, resolver=None
 ) -> None:
     """Store each document, and a mention per entity found in its content.
 
@@ -277,6 +283,14 @@ def _write_documents(
             continue
 
         for entity in found:
+            if resolver is not None and entity.type not in (ENTITY_TICKET, ENTITY_PR):
+                # Folded into the entity it is a variant of, when there is one:
+                # "OrderService" found after "order_service" points at the same
+                # node rather than beside it. Numbered references need no
+                # resolving; their number is already their identity.
+                canonical = resolver.add(entity)
+                if canonical.canonical != entity.text:
+                    entity = replace(entity, text=canonical.canonical)
             target = entity_id(entity)
 
             if target in known:

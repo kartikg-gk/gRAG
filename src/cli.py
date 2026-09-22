@@ -247,6 +247,22 @@ def _write_store(
 
     from .analysis import Extractor
 
+    # Variants of one entity are folded together as the text is read, with
+    # the same similarity the store embeds by and a model asked about the
+    # close calls. No model configured means close calls stay apart; no
+    # similarity (--no-embed) means nothing is folded.
+    resolver = None
+    if embedder is not None:
+        from .analysis import Resolver
+        from .common.judge import JudgeError, MergeJudge
+
+        try:
+            judge = MergeJudge()
+        except (JudgeError, ImportError) as exc:
+            print(f"  entity merging: close calls kept apart ({exc})", file=sys.stderr)
+            judge = None
+        resolver = Resolver(embedder, judge)
+
     try:
         store = open_context_graph(destination)
     except Exception as exc:
@@ -260,6 +276,7 @@ def _write_store(
             embedder=embedder,
             extractor=Extractor("none"),
             documents=documents,
+            resolver=resolver,
         )
         store.build_vector_index(rebuild=True)
     except Exception as exc:
@@ -278,6 +295,13 @@ def _write_store(
         f"    {written.documents} documents, {written.mentions} mentions, "
         f"{written.embedded} embedded"
     )
+    if resolver is not None:
+        merged = resolver.stats
+        print(
+            f"    {merged.variant_merges} variants merged "
+            f"({merged.fast_merges} outright, {merged.model_merges} by the model, "
+            f"{merged.model_rejections} kept apart after asking)"
+        )
     return True
 
 
