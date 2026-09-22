@@ -86,10 +86,23 @@ services:
     volumes:
       - artifacts:/home/app/data/artifacts
       - graphs:/home/app/data/graphs
+    healthcheck:
+      # Healthy once it answers, which is after startup created the control
+      # plane's tables. The worker and the scheduler wait for this: started
+      # beside it, the first scheduled build ran before the tables existed.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
   worker:
     <<: *app
     profiles: [stack]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      api: {condition: service_healthy}
     # Threads, not the default prefork pool: the graph engine and the model
     # must not be forked.
     command: ["celery", "-A", "graphrag.worker.app", "worker", "--loglevel=info", "-P", "threads", "-Q", "graphrag"]
@@ -97,6 +110,10 @@ services:
   beat:
     <<: *app
     profiles: [stack]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      api: {condition: service_healthy}
     command: ["celery", "-A", "graphrag.worker.app", "beat", "--loglevel=info"]
     volumes: []
 
