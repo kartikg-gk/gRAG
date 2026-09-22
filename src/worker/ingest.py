@@ -94,7 +94,58 @@ NUMBERED_TYPES = ("Ticket", "PR")
 #: whole, so a reference deleted from a body leaves the graph with it.
 TEXT_RELATIONS = (RELATION_MENTIONS, RELATION_RESOLVES)
 
-_NUMBER = re.compile(r"\d+")
+#: How an item's text names an issue or pull request by number. Each form
+#: says which repository it means, and only this repository's are resolved:
+#:
+#: - ``#203`` — bare, so this repository;
+#: - ``owner/repo#203`` — that repository;
+#: - ``github.com/owner/repo/issues/203`` or ``/pull/203`` — that repository,
+#:   and the same through dependabot's redirect host;
+#: - ``<a href="…">#203</a>`` — the text of a link means what the link means.
+#:
+#: Read in that order, with each match blanked out before the next form is
+#: looked for, so a bare ``#203`` inside a qualified or linked one is never
+#: read a second time as this repository's.
+_REPO_URL = re.compile(
+    r"(?:github\.com|github-redirect\.dependabot\.com)/([\w.-]+)/([\w.-]+)/(?:issues|pull)/(\d+)",
+    re.IGNORECASE,
+)
+_LINKED_NUMBER = re.compile(
+    r"<a\b[^>]*\bhref=[\"']([^\"']*)[\"'][^>]*>\s*#(\d+)\s*</a>", re.IGNORECASE
+)
+_QUALIFIED_NUMBER = re.compile(r"(?<![\w./-])([\w.-]+)/([\w.-]+)#(\d+)\b")
+_BARE_NUMBER = re.compile(r"(?<![\w/#&])#(\d+)\b")
+
+
+def numbered_references(text: str, repo_name: str) -> list[str]:
+    """The issue and pull request numbers ``text`` names in ``repo_name``.
+
+    In the order first named, each once. References to another repository
+    are left out, and so is a link whose target is not an issue or pull
+    request at all: there is nothing here it could mean.
+    """
+    here = repo_name.lower()
+    found: list[str] = []
+
+    def blank(match: re.Match) -> str:
+        return " " * (match.end() - match.start())
+
+    def linked(match: re.Match) -> str:
+        url = _REPO_URL.search(match.group(1))
+        if url is not None and f"{url.group(1)}/{url.group(2)}".lower() == here:
+            found.append(match.group(2))
+        return blank(match)
+
+    def qualified(match: re.Match) -> str:
+        if f"{match.group(1)}/{match.group(2)}".lower() == here:
+            found.append(match.group(3))
+        return blank(match)
+
+    text = _LINKED_NUMBER.sub(linked, text)
+    text = _REPO_URL.sub(qualified, text)
+    text = _QUALIFIED_NUMBER.sub(qualified, text)
+    found.extend(match.group(1) for match in _BARE_NUMBER.finditer(text))
+    return list(dict.fromkeys(found))
 
 #: The label an item kind is stored under, where it differs from the kind.
 #:
@@ -366,11 +417,8 @@ def ingest_repository(
 
         for entity in extract.extract(f"{title}\n\n{body}"):
             if entity.type in NUMBERED_TYPES:
-                number = _NUMBER.search(entity.text)
-                if number is not None:
-                    reference = (node_id, number.group(0), float(entity.score))
-                    if not link_number(*reference):
-                        deferred.append(reference)
+                # Read from the text below instead, where the repository a
+                # number belongs to can be seen; the extractor sees "#203".
                 continue
             found = entity_node_id(entity.type, entity.text)
             add_node(
@@ -384,6 +432,11 @@ def ingest_repository(
             add_edge(
                 node_id, found, RELATION_MENTIONS, round(float(entity.score), WEIGHT_PLACES)
             )
+
+        for number in numbered_references(f"{title}\n\n{body}", repo_name):
+            reference = (node_id, number, 1.0)
+            if not link_number(*reference):
+                deferred.append(reference)
 
         if kind == "PullRequest":
             # To the issue's node whether or not it has been read yet: an edge
