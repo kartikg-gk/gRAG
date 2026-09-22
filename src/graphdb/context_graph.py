@@ -620,10 +620,15 @@ class ContextGraph:
         **One query for the whole frontier**, not one per node. A traversal that
         issues a query per frontier node spends its time in round trips.
 
-        ``max_degree`` filters hubs **per relation type**, not per node. A
-        repository with 10,000 ``TOUCHES`` edges and 3 ``AUTHORED`` edges should
-        lose the file list and keep the authorship: dropping the node entirely
-        because one of its relations is broad throws away the useful half.
+        ``max_degree`` bounds hubs **per relation type**, not per node. A
+        repository with 10,000 ``TOUCHES`` edges and 3 ``AUTHORED`` edges keeps
+        all its authorship and only the strongest few of its files: capping per
+        node would let the broad relation crowd out the useful one.
+
+        A relation over the bound is **trimmed to its strongest neighbours, not
+        dropped**: highest confidence first, then the most recent. Dropping it
+        whole made the most connected nodes the least reachable — the top
+        author of a repository, with hundreds of pull requests, led nowhere.
         """
         wanted = list(dict.fromkeys(node_ids))
         grouped: dict[str, list[dict[str, Any]]] = {key: [] for key in wanted}
@@ -635,24 +640,21 @@ class ContextGraph:
             f"MATCH (a:{NODE_TABLE} {{id: origin}})-[r:{REL_TABLE}]-"
             f"(b:{NODE_TABLE}) "
             f"RETURN origin, b.id, b.label, b.type, r.relation, r.confidence, r.ts "
-            f"ORDER BY origin, r.confidence DESC, b.id ASC",
+            f"ORDER BY origin, r.confidence DESC, b.ts DESC, b.id ASC",
             {"ids": wanted},
         )
 
-        # Degree per (origin, relation) — the unit the hub filter works on.
-        per_relation: dict[tuple[str, str], set[str]] = {}
-        for origin, neighbor_id, _, _, relation, _, _ in rows:
-            per_relation.setdefault((origin, relation), set()).add(neighbor_id)
-
+        # Neighbours kept per (origin, relation) — the unit the hub bound works
+        # on. Rows arrive strongest first, so the first ones kept are the best.
+        kept: dict[tuple[str, str], set[str]] = {}
         for row in rows:
-            origin, relation = row[0], row[4]
-            if (
-                max_degree is not None
-                and len(per_relation[(origin, relation)]) > max_degree
-            ):
+            origin, neighbor_id, relation = row[0], row[1], row[4]
+            seen = kept.setdefault((origin, relation), set())
+            if max_degree is not None and neighbor_id not in seen and len(seen) >= max_degree:
                 continue
             if len(grouped[origin]) >= k:
                 continue
+            seen.add(neighbor_id)
             grouped[origin].append(_neighbor(row[1:]))
 
         return grouped
