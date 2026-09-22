@@ -139,6 +139,29 @@ def node_text(node: dict[str, Any]) -> str:
     return str(node["id"])
 
 
+#: Longest label a node is stored under. A label is a name, shown on the
+#: canvas and repeated in every answer context and tool result that lists the
+#: node; the text behind it is the node's document. Chosen, not measured:
+#: long enough for any real title or commit subject line.
+LABEL_MAX_CHARS = 200
+
+
+def node_label(node: dict[str, Any]) -> str:
+    """The name a node is stored under: the first line of its text, capped.
+
+    A commit's text is its whole message, and used as the label it was
+    measured at 5,680 characters, most of an answer's context spent on one
+    name. The message itself is kept in full as the commit's document.
+    """
+    text = node_text(node).strip()
+    first = text.splitlines()[0].strip() if text else ""
+    if not first:
+        return str(node["id"])
+    if len(first) > LABEL_MAX_CHARS:
+        return first[: LABEL_MAX_CHARS - 1].rstrip() + "…"
+    return first
+
+
 def node_path(node: dict[str, Any]) -> str:
     """Where the node came from, for a document row's ``path``."""
     for field_name in PATH_FIELDS:
@@ -195,11 +218,12 @@ def persist(
     stats = PersistStats()
 
     for node in builder.nodes.values():
+        # Embedded on the whole text, stored under a short name.
         text = node_text(node)
         vector = embedder.vector(text) if embedder is not None else None
         store.upsert_entity(
             node["id"],
-            text,
+            node_label(node),
             node.get("type", "Unknown"),
             timestamp=node.get("timestamp"),
             embedding=vector,
@@ -238,6 +262,11 @@ def _write_documents(
     for document in documents:
         store.upsert_document(document.id, document.path, document.content)
         stats.documents += 1
+        if document.origin in known:
+            # The text answers for the node it arrived with. Without this a
+            # commit reached in an answer shows only its label, and the label
+            # is only the message's first line.
+            store.add_mention(document.id, document.origin)
 
         if extractor is None:
             continue
