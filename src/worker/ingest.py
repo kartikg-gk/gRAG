@@ -10,11 +10,13 @@ local path could not run without a database.
 What it emits, and what it does not
 -----------------------------------
 
-**Two relation types: authorship and mention.** That is fewer than the typed
-set this project uses on its other path, which tells authoring, reviewing,
-resolving and touching apart. An artifact compiled from these rows therefore
-carries two kinds of edge, not six — worth saying here rather than leaving to
-be discovered by whoever wonders where the review edges went.
+**Three relation types: authorship, mention and resolution.** Resolution is
+a pull request whose body says it fixes, closes or resolves an issue, read by
+the same rule the other path uses. That is fewer than the typed set the other
+path records, which also tells reviewing and touching apart. An artifact
+compiled from these rows therefore carries three kinds of edge, not six —
+worth saying here rather than leaving to be discovered by whoever wonders
+where the review edges went.
 
 The identifiers are what make an entity one thing
 -------------------------------------------------
@@ -55,19 +57,26 @@ from typing import Any, Callable, Iterable, Optional
 
 from sqlmodel import Session
 
-from ..common.relations import RELATION_AUTHORED_BY, RELATION_MENTIONS
+from ..common.relations import RELATION_AUTHORED_BY, RELATION_MENTIONS, RELATION_RESOLVES
 from ..models.graph_store import ensure_graph_store_schema, upsert_edges, upsert_nodes
 
 logger = logging.getLogger("graphrag.worker.ingest")
 
-#: The two relations this path records, named and priced in the shared
-#: vocabulary. These are the two *this* path can tell apart from a title and a
-#: body; see the module docstring: the richer set lives on the other path.
+#: The relations this path records, named and priced in the shared
+#: vocabulary. These are the ones *this* path can tell apart from a title and
+#: a body; see the module docstring: the richer set lives on the other path.
 #:
 #: What this path writes as an edge's weight is how sure it is the edge exists
 #: — 1.0 for authorship, the extractor's score for a mention. What the relation
 #: is worth is applied when the artifact is compiled.
 RELATION_AUTHORED = RELATION_AUTHORED_BY
+
+#: "Fixes #982", "closes #12", "resolved #7": a pull request naming the issue it
+#: closes. The same rule the locally built graph applies, so a tenant graph
+#: carries the link from a change to the problem it solved.
+CLOSING_REFERENCE = re.compile(
+    r"(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE
+)
 
 #: The label an item kind is stored under, where it differs from the kind.
 #:
@@ -309,6 +318,13 @@ def ingest_repository(
             add_edge(
                 node_id, found, RELATION_MENTIONS, round(float(entity.score), WEIGHT_PLACES)
             )
+
+        if kind == "PullRequest":
+            # To the issue's node whether or not it has been read yet: an edge
+            # whose end is missing is not written when the graph is compiled,
+            # and is there as soon as the issue is.
+            for closed in sorted(set(CLOSING_REFERENCE.findall(body))):
+                add_edge(node_id, item_node_id(repo_id, "Issue", closed), RELATION_RESOLVES, 1.0)
 
     written_nodes = upsert_nodes(db, list(nodes.values()))
     written_edges = upsert_edges(db, list(edges.values()))
