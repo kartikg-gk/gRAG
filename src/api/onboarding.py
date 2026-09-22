@@ -46,17 +46,18 @@ import time
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
-from ..common.config import ADMIN_SECRET_KEY
+from ..common.config import ADMIN_SECRET_KEY, POD_ADDRESS
 from ..control_plane import PREFIX_LENGTH, hash_api_key, new_api_key
 from ..models import (
     LOAD_PULLING,
     ApiKey,
     Organization,
+    Pod,
     PodAssignment,
     Repository,
     control_plane_sessions,
 )
-from ..models.control_plane import DEFAULT_SCOPES
+from ..models.control_plane import DEFAULT_SCOPES, POD_BOOTING
 from ..placement import choose_pod
 from ..worker.tasks import arm_organization
 from . import auth as auth_module
@@ -174,6 +175,22 @@ def provision(payload: ProvisionRequest) -> ProvisionResponse:
                     created_at=now,
                 )
             )
+            if session.get(Pod, pod_id) is None:
+                # Placement falls back to this process's pod when no pod has
+                # registered, and the assignment below names it by foreign
+                # key. Without a row, onboarding fails until the pod agent has
+                # run once. Written as booting, not ready: it exists but has
+                # not said it serves; its agent marks it ready at boot.
+                session.add(
+                    Pod(
+                        pod_id=pod_id,
+                        address=POD_ADDRESS,
+                        status=POD_BOOTING,
+                        last_heartbeat_at=None,
+                        created_at=now,
+                    )
+                )
+                session.flush()
             session.add(
                 PodAssignment(
                     pod_id=pod_id,
