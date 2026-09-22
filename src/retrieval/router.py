@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
@@ -34,6 +35,14 @@ from .recency import age_and_decay
 from .response import RouterResponse, RoutedNode, build_context, documents_payload
 
 logger = logging.getLogger(__name__)
+
+#: The words of a query that may name a node: runs of letters, digits and the
+#: punctuation usernames and package names carry.
+_QUERY_WORD = re.compile(r"[\w][\w.-]*[\w]")
+
+#: Shortest word looked up as a name. Shorter ones are articles and
+#: prepositions, and an exact match on one is a coincidence.
+NAMED_WORD_MIN_CHARS = 3
 
 _EMBED_EXECUTOR: ThreadPoolExecutor | None = None
 _EMBED_EXECUTOR_LOCK = Lock()
@@ -139,8 +148,32 @@ class RetrievalRouter:
             hits.append((node_id, float(row["similarity"])))
         return hits
 
+    def _named_nodes(self, query: str) -> list[dict]:
+        """Nodes whose label is a word of the query, exactly (ignoring case).
+
+        A username is a name the extractor does not recognise, and the text
+        model cannot tell one from another: embedded, "kevinjosethomas" sits
+        near "robertkeus" because their letters look alike. Looking each word
+        up as a label finds the one the query actually names.
+        """
+        rows: list[dict] = []
+        for word in dict.fromkeys(_QUERY_WORD.findall(query)):
+            if len(word) >= NAMED_WORD_MIN_CHARS and not word.isdigit():
+                rows.extend(self.store.find_by_label(word))
+        return rows
+
     def _linked_seeds(self, query: str, meta: dict[str, dict]) -> list[str]:
         linked: list[str] = []
+        for row in self._named_nodes(query):
+            node_id = row.get("id")
+            if node_id is None:
+                continue
+            meta.setdefault(node_id, {
+                "label": row.get("label"),
+                "type": row.get("type"),
+                "timestamp": row.get("timestamp", row.get("ts")),
+            })
+            linked.append(node_id)
         for entity in self._entities(query):
             rows = list(self.store.find_by_label(entity.text))
             if not rows:
@@ -209,7 +242,11 @@ class RetrievalRouter:
 
         pool = self._vector_hits(query, meta)
         linked_seeds = self._linked_seeds(query, meta)
-        fuzzy_seeds = [
+        # A query that names something starts from what it names. Similar
+        # vectors are a way to find a start when nothing is named, not extra
+        # starts beside a named one: added anyway, a lookalike username
+        # brings its owner's work into an answer about someone else.
+        fuzzy_seeds = [] if linked_seeds else [
             node_id for node_id, similarity in sorted(pool, key=lambda item: -item[1])
             if similarity >= SEED_MIN_SIM
         ][:SEED_TOP_N]
