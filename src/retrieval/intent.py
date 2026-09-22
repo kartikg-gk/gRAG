@@ -42,6 +42,7 @@ from ..common.config import (
     STAGE_FALLBACK,
     STAGE_MARKER,
     STAGE_MODEL,
+    STAGE_NAMED,
 )
 
 
@@ -80,13 +81,16 @@ def first_marker(query: str, markers) -> str | None:
     return None
 
 
-def classify(query: str, judge: Judge | None = None) -> Intent:
+def classify(query: str, judge: Judge | None = None, *, named: bool = False) -> Intent:
     """Classify ``query`` as relational or conceptual.
 
     Relational markers are checked before semantic ones. A query carrying both
     — "who explains the architecture" — is treated as relational, because the
     thing it names is more specific than the thing it describes and the
     specific evidence is the one worth following.
+
+    With no marker, a query that names a node of the graph (``named``) is
+    relational; only a query that names nothing is put to the judge.
 
     An empty query is conceptual by fallback. There is nothing to match and
     nothing to ask a judge about.
@@ -101,6 +105,13 @@ def classify(query: str, judge: Judge | None = None) -> Intent:
     marker = first_marker(query, SEMANTIC_MARKERS)
     if marker is not None:
         return Intent(INTENT_CONCEPTUAL, STAGE_MARKER, marker)
+
+    # A query naming a person, a pull request or a service asks about that
+    # thing's connections. Left to the model, two questions of the same shape
+    # — "what did X work on?" — came back one relational and one semantic,
+    # and the semantic one weighted the walk from X at a fifth.
+    if named:
+        return Intent(INTENT_RELATIONAL, STAGE_NAMED)
 
     if judge is None:
         return Intent(INTENT_CONCEPTUAL, STAGE_FALLBACK)

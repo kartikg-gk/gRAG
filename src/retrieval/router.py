@@ -162,9 +162,11 @@ class RetrievalRouter:
                 rows.extend(self.store.find_by_label(word))
         return rows
 
-    def _linked_seeds(self, query: str, meta: dict[str, dict]) -> list[str]:
+    def _linked_seeds(
+        self, query: str, meta: dict[str, dict], named: list[dict] | None = None
+    ) -> list[str]:
         linked: list[str] = []
-        for row in self._named_nodes(query):
+        for row in self._named_nodes(query) if named is None else named:
             node_id = row.get("id")
             if node_id is None:
                 continue
@@ -232,7 +234,8 @@ class RetrievalRouter:
 
     def route(self, query: str, top_k: int | None = None) -> RouterResponse:
         query = (query or "")[:MAX_QUERY_CHARS]
-        decision = classify(query, self.judge)
+        named = self._named_nodes(query)
+        decision = classify(query, self.judge, named=bool(named))
         relational = decision.intent == INTENT_RELATIONAL
         alpha = VECTOR_WEIGHT_RELATIONAL if relational else VECTOR_WEIGHT_CONCEPTUAL
         beta = GRAPH_WEIGHT_RELATIONAL if relational else GRAPH_WEIGHT_CONCEPTUAL
@@ -241,7 +244,7 @@ class RetrievalRouter:
         meta: dict[str, dict] = {}
 
         pool = self._vector_hits(query, meta)
-        linked_seeds = self._linked_seeds(query, meta)
+        linked_seeds = self._linked_seeds(query, meta, named)
         # A query that names something starts from what it names. Similar
         # vectors are a way to find a start when nothing is named, not extra
         # starts beside a named one: added anyway, a lookalike username

@@ -390,6 +390,8 @@ INTENT_CONCEPTUAL = INTENT_SEMANTIC
 STAGE_MARKER = "marker"
 STAGE_MODEL = "model"
 STAGE_FALLBACK = "fallback"
+#: The query names a node of the graph exactly, and no marker said otherwise.
+STAGE_NAMED = "named"
 
 # --------------------------------------------------------------------------
 # Fusion weights
