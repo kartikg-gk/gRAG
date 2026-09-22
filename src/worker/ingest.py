@@ -50,6 +50,7 @@ a repository with no new activity is the common case on a fleet.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -491,8 +492,65 @@ def ingest_repository(
 # --------------------------------------------------------------------------
 
 
+#: Set to force the demonstration batch even with a token available.
+DEMO_VARIABLE = "GRAPHRAG_GITHUB_DEMO"
+
+#: What a repository reads as when there is no way to reach GitHub: no token
+#: for this repository, none in the environment. Small, fixed, and written to
+#: exercise every edge this path records — two authors, a mention of a
+#: service, a pull request that closes an issue — so a fresh install with no
+#: credentials still builds a graph worth looking at.
+DEMO_ITEMS = (
+    {
+        "kind": "Issue", "number": 7, "id": 9007,
+        "title": "Search results go stale after a reindex",
+        "body": "After a nightly reindex the search_indexer keeps serving the old "
+                "shard for up to an hour. Seen in production on Tuesday. "
+                "Reported by dana-ops.",
+        "user": {"login": "dana-ops"},
+        "html_url": "https://github.com/example/demo/issues/7",
+        "created_at": "2026-07-01T08:00:00+00:00",
+        "updated_at": "2026-07-01T08:00:00+00:00",
+    },
+    {
+        "kind": "PullRequest", "number": 12, "id": 9012,
+        "title": "Swap shards atomically in the search_indexer",
+        "body": "Builds the new shard beside the old one and swaps the alias in "
+                "one step, so readers never see a half-built index. Fixes #7.",
+        "user": {"login": "sam-dev"},
+        "html_url": "https://github.com/example/demo/pull/12",
+        "merged_at": "2026-07-03T16:30:00+00:00",
+        "created_at": "2026-07-02T10:00:00+00:00",
+        "updated_at": "2026-07-03T16:30:00+00:00",
+    },
+    {
+        "kind": "PullRequest", "number": 13, "id": 9013,
+        "title": "Alert when the search_indexer falls behind",
+        "body": "Adds a lag metric and an alert at ten minutes, following #12. "
+                "Reviewed by dana-ops.",
+        "user": {"login": "sam-dev"},
+        "html_url": "https://github.com/example/demo/pull/13",
+        "merged_at": "2026-07-05T09:15:00+00:00",
+        "created_at": "2026-07-04T11:00:00+00:00",
+        "updated_at": "2026-07-05T09:15:00+00:00",
+    },
+)
+
+
+def _demo_wanted(token: str | None) -> bool:
+    """Whether to read the demonstration batch instead of GitHub."""
+    if os.environ.get(DEMO_VARIABLE, "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return not (token or os.environ.get("GITHUB_TOKEN", "").strip())
+
+
 def _fetch_delta(repo_name: str, cursor: str | None, token: str | None):
     """Pull requests and issues touched since ``cursor``.
+
+    With no way to reach GitHub — no token for the repository and none in the
+    environment — the fixed demonstration batch instead, once: on the first
+    read, when there is no cursor. Every later read finds nothing new, so a
+    tenant built from it stays as it is rather than growing on every sweep.
 
     The cursor is the last update time this repository was read to. The
     client lists newest first, so this stops at the first item that is not
@@ -500,6 +558,14 @@ def _fetch_delta(repo_name: str, cursor: str | None, token: str | None):
     that changed.
     """
     from ..ingestion.github import fetch_issues, fetch_pull_requests, make_session
+
+    if _demo_wanted(token):
+        logger.warning(
+            "%s: no GitHub token; reading the demonstration batch instead", repo_name
+        )
+        if not cursor:
+            yield from (dict(item) for item in DEMO_ITEMS)
+        return
 
     since = _parse_cursor(cursor)
 
