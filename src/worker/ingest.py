@@ -55,10 +55,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Optional
 
-from sqlmodel import Session
+from sqlmodel import Session, delete, select
 
 from ..common.relations import RELATION_AUTHORED_BY, RELATION_MENTIONS, RELATION_RESOLVES
-from ..models.graph_store import ensure_graph_store_schema, upsert_edges, upsert_nodes
+from ..models.graph_store import (
+    EntityEdge,
+    EntityNode,
+    ensure_graph_store_schema,
+    upsert_edges,
+    upsert_nodes,
+)
 
 logger = logging.getLogger("graphrag.worker.ingest")
 
@@ -77,6 +83,18 @@ RELATION_AUTHORED = RELATION_AUTHORED_BY
 CLOSING_REFERENCE = re.compile(
     r"(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE
 )
+
+#: Extracted entity types that are a number, not a name: "#433". A number
+#: means something only inside one repository, so it is resolved to that
+#: repository's issue or pull request, never made a node of its own — keyed by
+#: its text it would merge "#433" from every repository into one node.
+NUMBERED_TYPES = ("Ticket", "PR")
+
+#: Relations recomputed from an item's text on every read of it. Rewritten
+#: whole, so a reference deleted from a body leaves the graph with it.
+TEXT_RELATIONS = (RELATION_MENTIONS, RELATION_RESOLVES)
+
+_NUMBER = re.compile(r"\d+")
 
 #: The label an item kind is stored under, where it differs from the kind.
 #:
@@ -145,6 +163,21 @@ def item_node_id(repo_id: str, kind: str, number: int | str) -> str:
 def person_node_id(name: str) -> str:
     """The identifier for a person, wherever they were named."""
     return f"{PERSON_PREFIX}:{slugify(name)}"
+
+
+def _remove_orphaned_entities(db: Session, org_id: str) -> None:
+    """Drop extracted entities nothing points at any more.
+
+    An extracted entity exists only because some item mentioned it. Once the
+    last mention is rewritten away it is a node with no reason to be in the
+    graph. People and items are never touched here.
+    """
+    linked = select(EntityEdge.target_id).where(EntityEdge.org_id == org_id)
+    db.exec(delete(EntityNode).where(
+        EntityNode.org_id == org_id,
+        EntityNode.node_id.like(f"{ENTITY_PREFIX}:%"),
+        EntityNode.node_id.not_in(linked),
+    ))
 
 
 def entity_node_id(entity_type: str, text: str) -> str:
@@ -227,6 +260,17 @@ def ingest_repository(
 
     nodes: dict[str, dict[str, Any]] = {}
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+    #: (item, number, score) for a "#N" whose item was not known when found.
+    #: Held here only: no node is written for it while it waits.
+    deferred: list[tuple[str, str, float]] = []
+    #: This repository's items already in the graph from earlier runs, read
+    #: once, so resolving a number costs no query of its own.
+    stored_items = set(db.exec(
+        select(EntityNode.node_id).where(
+            EntityNode.org_id == org_id,
+            EntityNode.node_id.like(f"{repo_id}:%"),
+        )
+    ).all())
 
     def add_node(node_id: str, *, embed_text: str, **fields) -> None:
         """First write wins — see the module docstring.
@@ -261,6 +305,21 @@ def ingest_repository(
             "weight": weight,
             "created_at": moment,
         }
+
+    def link_number(source: str, number: str, score: float) -> bool:
+        """Point ``source`` at this repository's item ``#number``, if it is known.
+
+        Known means read earlier in this pass or stored by an earlier one.
+        GitHub numbers issues and pull requests from one sequence, so at most
+        one of the two exists. An item naming its own number links nothing.
+        """
+        for kind in ("Issue", "PullRequest"):
+            target = item_node_id(repo_id, kind, number)
+            if target in nodes or target in stored_items:
+                if target != source:
+                    add_edge(source, target, RELATION_MENTIONS, round(score, WEIGHT_PLACES))
+                return True
+        return False
 
     for item in items:
         kind = _kind_of(item)
@@ -306,6 +365,13 @@ def ingest_repository(
             add_edge(node_id, person, RELATION_AUTHORED, 1.0)
 
         for entity in extract.extract(f"{title}\n\n{body}"):
+            if entity.type in NUMBERED_TYPES:
+                number = _NUMBER.search(entity.text)
+                if number is not None:
+                    reference = (node_id, number.group(0), float(entity.score))
+                    if not link_number(*reference):
+                        deferred.append(reference)
+                continue
             found = entity_node_id(entity.type, entity.text)
             add_node(
                 found,
@@ -326,8 +392,29 @@ def ingest_repository(
             for closed in sorted(set(CLOSING_REFERENCE.findall(body))):
                 add_edge(node_id, item_node_id(repo_id, "Issue", closed), RELATION_RESOLVES, 1.0)
 
+    # The second and last try for a number whose item had not been read when
+    # it was found: an issue later in this same pass than the pull request
+    # naming it. One that still names nothing is dropped — another
+    # repository's, or an item not read yet, with nothing it could point at.
+    linked_late = sum(1 for reference in deferred if link_number(*reference))
+    if deferred:
+        logger.info(
+            "%s: %d reference(s) deferred, %d linked on retry, %d dropped",
+            repo_name, len(deferred), linked_late, len(deferred) - linked_late,
+        )
+
+    # What these items' text said before is replaced by what it says now.
+    read = [node_id for node_id in nodes if node_id.startswith(f"{repo_id}:")]
+    if read:
+        db.exec(delete(EntityEdge).where(
+            EntityEdge.org_id == org_id,
+            EntityEdge.source_id.in_(read),
+            EntityEdge.relation_type.in_(TEXT_RELATIONS),
+        ))
+
     written_nodes = upsert_nodes(db, list(nodes.values()))
     written_edges = upsert_edges(db, list(edges.values()))
+    _remove_orphaned_entities(db, org_id)
     # One commit over both. A run that wrote its entities and lost its
     # relationships would leave a graph that looks populated and traverses
     # nowhere.
