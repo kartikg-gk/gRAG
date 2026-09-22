@@ -439,6 +439,9 @@ HALF_LIFE_DAYS = {
     "Issue": 21.0,
     NODE_COMMIT: 45.0,
     NODE_PR: 60.0,
+    # A tenant pull request stored before its label became "PR". Same half-life
+    # until its next ingest relabels it.
+    "PullRequest": 60.0,
     NODE_FILE: 120.0,
     NODE_PERSON: 180.0,
     ENTITY_SERVICE: 365.0,
