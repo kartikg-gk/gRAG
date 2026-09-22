@@ -23,6 +23,15 @@ coverage.xml
 graph_store/
 *.duckdb
 
+# What a local run leaves behind: graph stores, built and downloaded
+# artifacts, and the scheduler's state file.
+*.lbug
+*.lbug.wal
+/graphs/
+/artifacts/
+/cache/
+celerybeat-schedule*
+
 # Documentation and instruction files stay local, untracked.
 *.md
 # except the root one, which the outside world reads. Anchored with a leading
