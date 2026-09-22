@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # The package installs with every extra the server needs and each entry
+  # point imports. The test suite is kept out of the repository, so this job
+  # checks what a deployment would hit first: a missing dependency, a module
+  # left out of the package list, an import that fails at start-up.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # The CPU build of torch first; left alone, the embedding library pulls
+      # the CUDA build, gigabytes a runner never uses.
+      - name: install
+        run: |
+          pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install ".[api,graph,embeddings,judge,sentry]"
+      - name: byte-compile
+        run: python -m compileall -q src
+      - name: import every entry point
+        run: |
+          python -c "import graphrag, graphrag.api.app, graphrag.worker.app, graphrag.worker.tasks, graphrag.worker.compile, graphrag.cli, graphrag.tracing.viewer, graphrag.agent_tools"
+          graphrag --help
+          graphrag-view --help
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend

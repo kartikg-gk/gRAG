@@ -1,0 +1,46 @@
+# Publish the package to PyPI when a version tag is pushed (e.g. v0.2.0).
+#
+# One-time setup on pypi.org, under the project's Publishing settings, "Add a
+# new publisher": this repository, workflow release.yml, environment pypi.
+# After that no API token is stored anywhere; PyPI trusts this workflow
+# through OpenID Connect.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # OpenID Connect, for PyPI's trusted publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # The frontend has to build before anything ships; a tag whose UI does
+      # not compile is not a release.
+      - name: build the frontend
+        run: npm ci && npm run build
+        working-directory: frontend
+
+      - name: build and check the distribution
+        run: |
+          pip install build twine
+          python -m build -o dist/
+          twine check dist/*
+
+      - name: publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
