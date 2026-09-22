@@ -59,6 +59,26 @@ def arm_organization(org_id: str, *, now: float | None = None) -> float:
     return deadline
 
 
+def _fail_abandoned() -> None:
+    """Release jobs whose worker died, so their tenants can build again.
+
+    Never raises: the sweep's job is dispatching, and a control plane that
+    cannot be reached this time is reached on the next tick.
+    """
+    try:
+        from ..models.database import control_plane_sessions, create_control_plane_engine
+        from .compile import fail_abandoned_jobs
+
+        engine = create_control_plane_engine()
+        try:
+            with control_plane_sessions(engine)() as db:
+                fail_abandoned_jobs(db)
+        finally:
+            engine.dispose()
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.warning("could not check for abandoned jobs", exc_info=True)
+
+
 @app.task(name=SWEEP_TASK)
 def sweep(now: float | None = None) -> int:
     """Dispatch a compile for every organisation whose window has closed.
@@ -67,6 +87,7 @@ def sweep(now: float | None = None) -> int:
     fleet and is not logged — a line every thirty seconds saying nothing
     happened is a line nobody reads by the time something does.
     """
+    _fail_abandoned()
     due = claim(now=now)
     if not due:
         return 0
