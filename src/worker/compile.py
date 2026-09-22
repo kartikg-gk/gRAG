@@ -56,7 +56,13 @@ from ..models.control_plane import (
     IngestJob,
     Organization,
 )
-from ..models.database import control_plane_sessions, create_control_plane_engine
+from ..models.database import (
+    as_url,
+    control_plane_sessions,
+    create_control_plane_engine,
+    create_graph_store_engine,
+    graph_store_url,
+)
 from .app import COMPILE_TASK, app
 from .locks import LOCK_EXPIRY_SECONDS, compile_lock
 
@@ -90,7 +96,21 @@ def run_phases(org_id: str, job_id: str, db: Session):
     """
     from .phases import run_phases as phases
 
-    return phases(org_id, job_id, db)
+    # The graph rows live beside the control plane unless a separate database
+    # is named for them; then they are read and written through their own
+    # session while the job and the artifact stay on this one.
+    target = graph_store_url()
+    if target is None or as_url(target) == db.get_bind().url.render_as_string(
+        hide_password=False
+    ):
+        return phases(org_id, job_id, db)
+
+    engine = create_graph_store_engine(target)
+    try:
+        with Session(engine) as store_db:
+            return phases(org_id, job_id, db, store_db=store_db)
+    finally:
+        engine.dispose()
 
 
 @app.task(bind=True, name=COMPILE_TASK, max_retries=MAX_RETRIES)

@@ -104,13 +104,19 @@ def run_phases(
     job_id: str,
     db: Session,
     *,
+    store_db: Session | None = None,
     build_root: str | Path = BUILD_ROOT,
     ingest: Callable[..., object] = ingest_repository,
     compile_to: Callable[..., object] = compile_artifact,
     upload: Callable[..., str] = put_artifact,
     now: int | None = None,
 ) -> CompileSummary:
-    """Ingest, compile, upload, register, and point the organisation at it."""
+    """Ingest, compile, upload, register, and point the organisation at it.
+
+    ``db`` holds the control plane: repositories, the job, the artifact.
+    ``store_db`` holds the tenants' graph rows when they live in a database of
+    their own; unset, they live in ``db``.
+    """
     from .compile import finalize_job, next_version, set_job_status
 
     moment = now if now is not None else _now()
@@ -132,7 +138,7 @@ def run_phases(
             repo_id=repository.repo_id,
             repo_name=repository.name,
             cursor=repository.last_synced_cursor,
-            db=db,
+            db=store_db if store_db is not None else db,
             token=repository.get_github_token(),
         )
         if result.cursor is not None and result.cursor != repository.last_synced_cursor:
@@ -170,7 +176,7 @@ def run_phases(
     # second. The arithmetic is the common path, not the guarantee.
     version = next_version(db, org_id)
     build_path = Path(build_root) / org_id / f"v{version}.lbug"
-    built = compile_to(org_id, db, build_path)
+    built = compile_to(org_id, store_db if store_db is not None else db, build_path)
 
     # -- upload ------------------------------------------------------------
     set_job_status(db, job_id, JOB_UPLOADING)

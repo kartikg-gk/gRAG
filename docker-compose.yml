@@ -20,10 +20,14 @@ x-app: &app
     - path: .env
       required: false
   environment: &app-env
-    # One Postgres database holds the control plane, the graph store and the
-    # history, through the general URL.
-    GRAPHRAG_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/graphrag
-    GRAPHRAG_CONTROL_PLANE_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/graphrag
+    # Two databases on the one server, made by infra/postgres/init.sql: the
+    # control plane (history lives with it) and the graph store. The general
+    # URL is pinned to the control plane too, so a development .env read above
+    # cannot point a container back at a database on the host.
+    GRAPHRAG_CONTROL_PLANE_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/control_plane
+    GRAPHRAG_GRAPH_STORE_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/graph_store
+    GRAPHRAG_HISTORY_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/control_plane
+    GRAPHRAG_DATABASE_URL: postgresql+psycopg://graphrag:${POSTGRES_PASSWORD:-graphrag}@db:5432/control_plane
     # Redis is the queue's broker and the debounce store.
     GRAPHRAG_REDIS_URL: redis://redis:6379/0
     GRAPHRAG_MULTI_TENANCY_ENABLED: "1"
@@ -66,6 +70,8 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Makes the two databases on first start; ignored once the volume exists.
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U graphrag -d graphrag"]
       interval: 5s

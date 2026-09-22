@@ -55,6 +55,7 @@ from sqlmodel import Session
 #: because a variable it does not need is unset.
 CONTROL_PLANE_URL_VARIABLE = "GRAPHRAG_CONTROL_PLANE_DATABASE_URL"
 DATABASE_URL_VARIABLE = "GRAPHRAG_DATABASE_URL"
+GRAPH_STORE_URL_VARIABLE = "GRAPHRAG_GRAPH_STORE_DATABASE_URL"
 
 
 class ControlPlaneNotConfigured(RuntimeError):
@@ -87,6 +88,24 @@ def control_plane_url(environment: dict[str, str] | None = None) -> str:
         "a local file would give every process its own control plane and no "
         "error."
     )
+
+
+def graph_store_url(environment: dict[str, str] | None = None) -> str | None:
+    """Where tenants' accumulated graph rows live, when that is set apart.
+
+    The graph store can be its own database: it grows with every tenant's
+    history and is read in bulk by every build, while the control plane is a
+    few small tables on the request path, and the two are sized and backed up
+    differently. ``None`` means nothing names a separate one, and the rows live
+    beside the control plane — the one-database setup a single variable gives.
+    """
+    source = environment if environment is not None else os.environ
+
+    for variable in (GRAPH_STORE_URL_VARIABLE, DATABASE_URL_VARIABLE):
+        value = (source.get(variable) or "").strip()
+        if value:
+            return value
+    return None
 
 
 def as_url(target: str | Path) -> str:
@@ -123,6 +142,16 @@ def create_control_plane_engine(
         _enforce_sqlite_foreign_keys(engine)
 
     return engine
+
+
+def create_graph_store_engine(target: str | Path, **options) -> Engine:
+    """An engine for a graph store kept in its own database.
+
+    Built the same way as the control plane's — health-checked connections,
+    foreign keys on under SQLite — because it is the same kind of database
+    used the same way, only holding different tables.
+    """
+    return create_control_plane_engine(target, **options)
 
 
 def _enforce_sqlite_foreign_keys(engine: Engine) -> None:
