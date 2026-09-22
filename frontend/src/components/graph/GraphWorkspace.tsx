@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Minus, Plus, Scan } from "lucide-react";
+import { Minus, Network, Plus, Scan } from "lucide-react";
 import ReactFlow, {
   Background, BackgroundVariant, Handle, MarkerType, Panel, Position, ReactFlowProvider,
   useEdgesState, useNodesState, useReactFlow,
@@ -39,8 +39,23 @@ function EntityNode({ data, selected }: NodeProps<TraceNode>) {
 
 const nodeTypes = { entity: EntityNode };
 
-function toFlowNodes(trace: TraceState): FlowNode[] {
-  const laidOut = layoutGraph(trace.graph.nodes, trace.graph.edges);
+type Graph = TraceState["graph"];
+
+// What the question touched: nodes it ranked or walked through, and the edges
+// it walked. Neighbours pulled in only to give those nodes context are left
+// out unless asked for; around a busy node they are most of the picture.
+function questionGraph(graph: Graph, showNeighbours: boolean): Graph {
+  const touched = graph.nodes.filter((node) => node.active);
+  if (showNeighbours || touched.length === 0) return graph;
+  const ids = new Set(touched.map((node) => node.id));
+  return {
+    nodes: touched,
+    edges: graph.edges.filter((edge) => edge.active && ids.has(edge.source) && ids.has(edge.target)),
+  };
+}
+
+function toFlowNodes(graph: Graph): FlowNode[] {
+  const laidOut = layoutGraph(graph.nodes, graph.edges);
   return laidOut.nodes.map((node) => ({
     id: node.id, type: "entity", position: node.position, data: node,
     sourcePosition: Position.Right, targetPosition: Position.Left,
@@ -48,8 +63,8 @@ function toFlowNodes(trace: TraceState): FlowNode[] {
   }));
 }
 
-function toFlowEdges(trace: TraceState): Edge[] {
-  return trace.graph.edges.map((edge) => ({
+function toFlowEdges(graph: Graph): Edge[] {
+  return graph.edges.map((edge) => ({
     id: edge.id, source: edge.source, target: edge.target, type: "step",
     label: edge.relation?.toLowerCase().replace(/_/g, " "),
     labelStyle: { fill: "rgb(var(--m-ink-dim))", fontFamily: "ui-monospace, monospace", fontSize: 11 },
@@ -61,10 +76,26 @@ function toFlowEdges(trace: TraceState): Edge[] {
   }));
 }
 
-function CanvasControls() {
+interface NeighbourToggle { shown: boolean; hidden: number; onToggle: () => void }
+
+function CanvasControls({ neighbours }: { neighbours: NeighbourToggle }) {
   const { fitView, zoomIn, zoomOut } = useReactFlow();
+  const label = neighbours.shown ? "Hide neighbours" : `Show ${neighbours.hidden} neighbours`;
   return (
     <Panel position="top-right" className="!m-4 flex gap-2">
+      {neighbours.shown || neighbours.hidden > 0 ? (
+        <button
+          type="button" className={cn("canvas-control relative", neighbours.shown && "text-blue")}
+          onClick={neighbours.onToggle} aria-label={label} aria-pressed={neighbours.shown} title={label}
+        >
+          <Network size={17} />
+          {!neighbours.shown ? (
+            <span className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-blue px-1 text-center font-mono text-[10px] leading-[18px] text-white">
+              {neighbours.hidden > 99 ? "99+" : neighbours.hidden}
+            </span>
+          ) : null}
+        </button>
+      ) : null}
       <button type="button" className="canvas-control" onClick={() => void zoomIn({ duration: 180 })} aria-label="Zoom in"><Plus size={17} /></button>
       <button type="button" className="canvas-control" onClick={() => void zoomOut({ duration: 180 })} aria-label="Zoom out"><Minus size={17} /></button>
       <button type="button" className="canvas-control" onClick={() => void fitView({ padding: 0.25, duration: 500 })} aria-label="Fit graph"><Scan size={17} /></button>
@@ -77,15 +108,36 @@ function GraphWorkspaceInner({ trace, activeGraphId, citationFocus }: GraphWorks
   const [nodes, setNodes, onNodesChange] = useNodesState<TraceNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedId, setSelectedId] = useState<string>();
+  const [showNeighbours, setShowNeighbours] = useState(false);
+  const pendingFocus = useRef<string>();
   const { fitView, getNode, setCenter } = useReactFlow();
+
+  // Each new question opens on what it touched.
+  useEffect(() => setShowNeighbours(false), [trace.id]);
+
+  const shown = useMemo(() => questionGraph(trace.graph, showNeighbours), [trace.graph, showNeighbours]);
+  const hiddenNeighbours = trace.graph.nodes.length - questionGraph(trace.graph, false).nodes.length;
+
+  const focus = useCallback((nodeId: string) => {
+    const node = getNode(nodeId);
+    if (!node) return false;
+    setSelectedId(node.id);
+    void setCenter(node.position.x + NODE_W / 2, node.position.y + NODE_H / 2, { zoom: 1.25, duration: 650 });
+    return true;
+  }, [getNode, setCenter]);
 
   useEffect(() => {
     setSelectedId(undefined);
-    setNodes(toFlowNodes(trace));
-    setEdges(toFlowEdges(trace));
-    const timer = window.setTimeout(() => void fitView({ padding: 0.25, duration: 700 }), 120);
+    setNodes(toFlowNodes(shown));
+    setEdges(toFlowEdges(shown));
+    const timer = window.setTimeout(() => {
+      // A citation to a neighbour that was hidden: focus it once it is drawn.
+      const waiting = pendingFocus.current;
+      pendingFocus.current = undefined;
+      if (!waiting || !focus(waiting)) void fitView({ padding: 0.25, duration: 700 });
+    }, 120);
     return () => window.clearTimeout(timer);
-  }, [fitView, setEdges, setNodes, trace, trace.graph, trace.id]);
+  }, [fitView, focus, setEdges, setNodes, shown, trace.id]);
 
   useEffect(() => {
     setNodes((current) => current.map((node) => ({ ...node, selected: node.id === selectedId })));
@@ -93,11 +145,12 @@ function GraphWorkspaceInner({ trace, activeGraphId, citationFocus }: GraphWorks
 
   useEffect(() => {
     if (!citationFocus) return;
-    const node = getNode(citationFocus.nodeId);
-    if (!node) return;
-    setSelectedId(node.id);
-    void setCenter(node.position.x + NODE_W / 2, node.position.y + NODE_H / 2, { zoom: 1.25, duration: 650 });
-  }, [citationFocus?.nonce, getNode, setCenter]);
+    if (focus(citationFocus.nodeId)) return;
+    if (trace.graph.nodes.some((node) => node.id === citationFocus.nodeId)) {
+      pendingFocus.current = citationFocus.nodeId;
+      setShowNeighbours(true);
+    }
+  }, [citationFocus?.nonce]);
 
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedId)?.data, [nodes, selectedId]);
   const maxInspectorHeight = useCallback(() => workspaceRef.current?.clientHeight ?? 500, []);
@@ -113,7 +166,7 @@ function GraphWorkspaceInner({ trace, activeGraphId, citationFocus }: GraphWorks
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgb(var(--m-ink-muted) / .25)" />
-        <CanvasControls />
+        <CanvasControls neighbours={{ shown: showNeighbours, hidden: hiddenNeighbours, onToggle: () => setShowNeighbours((value) => !value) }} />
       </ReactFlow>
       {selectedNode ? <NodeInspector node={selectedNode} activeGraphId={activeGraphId} maxHeight={maxInspectorHeight} onClose={() => setSelectedId(undefined)} /> : null}
     </div>
