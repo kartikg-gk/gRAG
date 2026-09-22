@@ -69,6 +69,13 @@ logger = logging.getLogger("graphrag.worker.ingest")
 #: is worth is applied when the artifact is compiled.
 RELATION_AUTHORED = RELATION_AUTHORED_BY
 
+#: The label an item kind is stored under, where it differs from the kind.
+#:
+#: Recency picks a half-life by label, and the table spells a pull request
+#: "PR". The kind stays in the node id, so relabelling never splits a node that
+#: is already stored.
+ITEM_LABELS = {"PullRequest": "PR"}
+
 #: What a node identifier starts with, by what the node is.
 PERSON_PREFIX = "person"
 ENTITY_PREFIX = "entity"
@@ -257,7 +264,7 @@ def ingest_repository(
         add_node(
             node_id,
             repo_id=repo_id,
-            label=kind,
+            label=ITEM_LABELS.get(kind, kind),
             name=f"{kind} #{number}",
             properties={
                 "title": title,
