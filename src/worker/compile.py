@@ -45,9 +45,12 @@ from sqlmodel import Session, select
 
 from ..ingestion.github import GitHubRateLimitError
 from ..models.control_plane import (
+    JOB_COMPILING,
     JOB_COMPLETED,
+    JOB_COMPUTING,
     JOB_FAILED,
     JOB_FETCHING,
+    JOB_UPLOADING,
     JOB_REGISTERED,
     GraphArtifact,
     IngestJob,
@@ -55,7 +58,7 @@ from ..models.control_plane import (
 )
 from ..models.database import control_plane_sessions, create_control_plane_engine
 from .app import COMPILE_TASK, app
-from .locks import compile_lock
+from .locks import LOCK_EXPIRY_SECONDS, compile_lock
 
 logger = logging.getLogger("graphrag.worker.compile")
 
@@ -193,6 +196,42 @@ def finalize_job(
     job.error = error
     job.finished_at = _now()
     db.commit()
+
+
+#: The states a worker holds a job in while it builds. A job left in one of
+#: these after its worker died stays there, and the one-in-flight-per-tenant
+#: index then refuses every later build for that tenant. Not queued, which the
+#: broker redelivers, and not registered, which waits on a pod, not a worker.
+WORKER_HELD = (JOB_FETCHING, JOB_COMPUTING, JOB_COMPILING, JOB_UPLOADING)
+
+#: What an abandoned job is failed with.
+ABANDONED_ERROR = "abandoned: no worker finished it before the compile lock expired"
+
+
+def fail_abandoned_jobs(db: Session, *, now: int | None = None) -> list[str]:
+    """Fail every job a worker has held for longer than the compile lock lives.
+
+    The lock's expiry is already this system's answer to "the worker holding
+    this is gone": past it, another compile for the organisation may start.
+    The job row gets the same verdict at the same moment, so it stops
+    blocking that next build. Returns the jobs it failed.
+    """
+    moment = now if now is not None else _now()
+    cutoff = moment - LOCK_EXPIRY_SECONDS
+    stale = [
+        job
+        for job in db.exec(select(IngestJob).where(IngestJob.status.in_(WORKER_HELD))).all()
+        if (job.started_at or job.queued_at) < cutoff
+    ]
+    for job in stale:
+        job.status = JOB_FAILED
+        job.error = ABANDONED_ERROR
+        job.finished_at = moment
+    if stale:
+        db.commit()
+        logger.warning("failed %d abandoned job(s): %s",
+                       len(stale), ", ".join(job.job_id for job in stale))
+    return [job.job_id for job in stale]
 
 
 def next_version(db: Session, org_id: str) -> int:
