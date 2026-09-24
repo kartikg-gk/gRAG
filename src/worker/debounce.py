@@ -64,16 +64,14 @@ FIRST_SEEN_KEY = "graphrag:compile:first-seen"
 #: same organisation, because the second one runs after the first has already
 #: removed what it took.
 #:
-#: The members are unpacked into the removal calls, which puts a ceiling on
-#: how many can be claimed in one go — a few thousand, on the interpreter's
-#: stack. That is far more than a sweep is ever expected to find, and the
-#: alternative costs a loop for a case that would mean something else had
-#: already gone badly wrong.
+#: Remove each claimed member inside the same Redis script. This costs more
+#: calls for a large due batch but keeps the operation atomic without relying
+#: on a Lua argument-list limit.
 CLAIM_SCRIPT = """
 local due = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-if #due > 0 then
-    redis.call('ZREM', KEYS[1], unpack(due))
-    redis.call('HDEL', KEYS[2], unpack(due))
+for _, member in ipairs(due) do
+    redis.call('ZREM', KEYS[1], member)
+    redis.call('HDEL', KEYS[2], member)
 end
 return due
 """
