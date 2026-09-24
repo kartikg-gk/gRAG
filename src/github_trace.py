@@ -262,7 +262,7 @@ def lexical_graph_retriever(corpus: list, k: int = 10):
 def _summary(repo: str, documents: list) -> str:
     """The run's answer, put together from what was retrieved."""
     if not documents:
-        return f"In the sampled {repo} activity, nothing matched the question."
+        return f"No recent evidence was retrieved from {repo}."
     lead = documents[0]
     counts = Counter(document.metadata["kind"] for document in documents)
     inventory = ", ".join(f"{kind}: {count}" for kind, count in sorted(counts.items()))

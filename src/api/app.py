@@ -135,15 +135,15 @@ STREAM_FAILED_ANSWER = "The answer could not be produced right now."
 #: The question template each hub type is offered with; anything else gets
 #: the default.
 SUGGESTION_TEMPLATES: dict[str, str] = {
-    "Person": "What did {label} work on?",
-    "Team": "What does {label} own?",
-    "Service": "What depends on {label}?",
-    "Library": "What changed in {label}?",
-    "Tool": "What is {label} used for?",
-    "PR": "What is related to {label}?",
-    "Ticket": "What is linked to {label}?",
+    "Person": "Show recent contributions by {label}.",
+    "Team": "Which areas are maintained by {label}?",
+    "Service": "Which components rely on {label}?",
+    "Library": "Which changes involve {label}?",
+    "Tool": "Where is {label} used?",
+    "PR": "Which entities connect to {label}?",
+    "Ticket": "Which work items connect to {label}?",
 }
-SUGGESTION_DEFAULT = "What is related to {label}?"
+SUGGESTION_DEFAULT = "Explore connections around {label}."
 
 _llm: dict = {}
 
