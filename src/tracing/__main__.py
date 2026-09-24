@@ -1,4 +1,4 @@
-"""Render a trace file: ``python -m src.tracing <trace.json>``."""
+"""Print a saved trace: ``python -m graphrag.tracing <path>``."""
 
 from .viewer import main
 

@@ -41,7 +41,7 @@ from uuid import UUID
 
 from langchain_core.callbacks.base import BaseCallbackHandler
 
-from src.tracing import (
+from .tracing import (
     ARM_GRAPH,
     ARM_VECTOR,
     KIND_DOCUMENT,

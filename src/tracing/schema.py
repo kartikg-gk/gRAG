@@ -7,6 +7,9 @@ pipeline.
 Schema versions
 ---------------
 
+**4** — explicit graph nodes and edges, plus numeric run metrics. Serializers
+derive a graph from retrievals when the producer does not provide a wider one.
+
 **3** — retrieved items and edges nest under a ``Retrieval``, one per retriever
 call, each carrying its own query, span, and arm. A run with two retrievers was
 previously flattened into one undifferentiated list, which lost which retriever
@@ -35,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Which retrieval arm produced a result set.
 ARM_VECTOR = "vector"
@@ -127,7 +130,7 @@ class Span:
     status: str = STATUS_RUNNING
 
 
-@dataclass
+@dataclass(eq=False)
 class Trace:
     """One query, start to finish."""
 
@@ -138,6 +141,16 @@ class Trace:
     duration_ms: float | None = None
     retrievals: list[Retrieval] = field(default_factory=list)
     spans: list[Span] = field(default_factory=list)
+    graph_nodes: list[TraceItem] | None = None
+    graph_edges: list[TraceEdge] | None = None
+    metrics: dict[str, float | int | None] = field(default_factory=dict)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Trace):
+            return NotImplemented
+        # A writer may derive graph/metrics from retrievals; loading that same
+        # recording must remain equal to the original implicit representation.
+        return to_dict(self) == to_dict(other)
 
     # -- views across every retrieval --------------------------------------
     #
@@ -233,6 +246,16 @@ def _edge_from_dict(payload: dict[str, Any]) -> TraceEdge:
     )
 
 
+def _unique_items(items: list[TraceItem]) -> list[TraceItem]:
+    seen: set[str] = set()
+    unique = []
+    for item in items:
+        if item.id not in seen:
+            seen.add(item.id)
+            unique.append(item)
+    return unique
+
+
 def to_dict(trace: Trace) -> dict[str, Any]:
     """Turn a trace into plain JSON-serializable data."""
     return {
@@ -242,6 +265,11 @@ def to_dict(trace: Trace) -> dict[str, Any]:
         "answer": trace.answer,
         "started_at": _isoformat(trace.started_at),
         "duration_ms": trace.duration_ms,
+        "graph": {
+            "nodes": [_item_to_dict(item) for item in _unique_items(trace.graph_nodes if trace.graph_nodes is not None else trace.items)],
+            "edges": [_edge_to_dict(edge) for edge in (trace.graph_edges if trace.graph_edges is not None else trace.edges)],
+        },
+        "metrics": {**trace.metrics, "duration_ms": trace.duration_ms},
         "retrievals": [
             {
                 "query": retrieval.query,
@@ -321,8 +349,11 @@ def trace_from_dict(payload: dict[str, Any]) -> Trace:
         answer=payload.get("answer"),
         producer=payload.get("producer", PRODUCER_UNKNOWN),
         started_at=_parse_time(payload.get("started_at")),
-        duration_ms=payload.get("duration_ms"),
+        duration_ms=payload.get("duration_ms", (payload.get("metrics") or {}).get("duration_ms")),
         retrievals=retrievals,
+        graph_nodes=[_item_from_dict(item) for item in payload["graph"]["nodes"]] if "graph" in payload else None,
+        graph_edges=[_edge_from_dict(edge) for edge in payload["graph"]["edges"]] if "graph" in payload else None,
+        metrics=payload.get("metrics") or {},
         spans=[
             Span(
                 id=span["id"],

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/kartikg-gk/gRAG/blob/main/docs/trace.schema.json",
+  "title": "graphRAG trace v4",
+  "type": "object",
+  "required": ["schema_version", "query", "graph", "retrievals", "spans", "metrics"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "query": { "type": "string" },
+    "answer": { "type": ["string", "null"] },
+    "producer": { "type": "string" },
+    "started_at": { "type": ["string", "null"], "format": "date-time" },
+    "duration_ms": { "type": ["number", "null"], "minimum": 0 },
+    "graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } }
+      }
+    },
+    "retrievals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["query", "arm", "items", "edges"],
+        "properties": {
+          "query": { "type": "string" },
+          "span_id": { "type": ["string", "null"] },
+          "arm": { "enum": ["vector", "graph", "hybrid", "unknown"] },
+          "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+          "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } }
+        }
+      }
+    },
+    "spans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "kind", "status"],
+        "properties": {
+          "id": { "type": "string" }, "name": { "type": "string" },
+          "kind": { "type": "string" }, "parent_id": { "type": ["string", "null"] },
+          "start_ms": { "type": ["number", "null"] },
+          "end_ms": { "type": ["number", "null"] },
+          "status": { "enum": ["running", "ok", "error"] }
+        }
+      }
+    },
+    "metrics": { "type": "object", "additionalProperties": { "type": ["number", "null"] } }
+  },
+  "$defs": {
+    "item": {
+      "type": "object", "required": ["id", "content", "source"],
+      "properties": {
+        "id": { "type": "string" }, "label": { "type": ["string", "null"] },
+        "kind": { "type": "string" }, "content": { "type": "string" },
+        "source": { "type": "string" }, "source_uri": { "type": ["string", "null"] },
+        "score": { "type": ["number", "null"] },
+        "vector_score": { "type": ["number", "null"] },
+        "graph_score": { "type": ["number", "null"] },
+        "overlap": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "metadata": { "type": "object" }
+      }
+    },
+    "edge": {
+      "type": "object", "required": ["source", "target", "relation"],
+      "properties": {
+        "source": { "type": "string" }, "target": { "type": "string" },
+        "relation": { "type": "string" }, "weight": { "type": ["number", "null"] }
+      }
+    }
+  }
+}
