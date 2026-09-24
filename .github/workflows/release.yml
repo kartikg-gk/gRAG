@@ -31,13 +31,22 @@ jobs:
       # The frontend has to build before anything ships; a tag whose UI does
       # not compile is not a release.
       - name: build the frontend
-        run: npm ci && npm run build
+        run: npm ci && npm test && npm run build
         working-directory: frontend
+
+      - name: bundle and test viewer
+        run: |
+          python tools/bundle_viewer.py
+          python tools/check_static_bundle.py
+          pip install ".[adapter]" pytest
+          python -m unittest discover -s tests -v
+          python -m pytest -q tests
 
       - name: build and check the distribution
         run: |
           pip install build twine
           python -m build -o dist/
+          python tools/check_wheel.py dist/*.whl
           twine check dist/*
 
       - name: publish to PyPI
