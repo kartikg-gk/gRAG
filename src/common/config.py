@@ -554,6 +554,31 @@ JUDGE_TIMEOUT_SECONDS = _env_float("GRAPHRAG_JUDGE_TIMEOUT_SECONDS", 2.0)
 #: failure answer.
 ANSWER_TIMEOUT_SECONDS = _env_float("GRAPHRAG_ANSWER_TIMEOUT_SECONDS", 60.0)
 
+#: Characters of caller-supplied context an answer is grounded in; anything
+#: past this is dropped before the model sees it. **Chosen**: about twice what
+#: a ten-result trace produces (measured ~20,500 on the largest demo graph), so
+#: a real question is never cut, while one request cannot fill a model's whole
+#: context window at the operator's expense.
+#: Whether the interactive API pages (/docs, /redoc, /openapi.json) are served.
+#: On by default for local work; a public deployment sets it to 0, so the full
+#: route list is not published to anyone who asks.
+API_DOCS_ENABLED = _env_str("GRAPHRAG_API_DOCS", "1") != "0"
+
+ANSWER_CONTEXT_MAX_CHARS = _env_int("GRAPHRAG_ANSWER_CONTEXT_MAX_CHARS", 40_000)
+
+#: Characters of a note that are summarised. **Chosen**: far above a node's
+#: snippet, which is what the inspector sends.
+SUMMARY_TEXT_MAX_CHARS = _env_int("GRAPHRAG_SUMMARY_TEXT_MAX_CHARS", 8_000)
+
+#: Tokens an answer and a summary may spend. **Chosen**: the prompts ask for
+#: two or three sentences and for one, so these only stop a runaway reply.
+ANSWER_MAX_TOKENS = _env_int("GRAPHRAG_ANSWER_MAX_TOKENS", 512)
+SUMMARY_MAX_TOKENS = _env_int("GRAPHRAG_SUMMARY_MAX_TOKENS", 160)
+
+#: The most results one trace request may ask for. **Chosen**: five times the
+#: default; the cost of a walk grows with it and nothing on screen needs more.
+TRACE_MAX_TOP_K = _env_int("GRAPHRAG_TRACE_MAX_TOP_K", 50)
+
 #: Tokens the query question may spend. **Chosen**: the answer is one word, and
 #: a cap this tight means a model that starts explaining itself is cut off
 #: rather than paid for. The reply is read by prefix, so a truncated word still

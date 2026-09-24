@@ -68,6 +68,9 @@ from slowapi.errors import RateLimitExceeded
 
 from ..cache import LRUCache
 from ..common.config import (
+    ANSWER_CONTEXT_MAX_CHARS,
+    ANSWER_MAX_TOKENS,
+    API_DOCS_ENABLED,
     CORS_ORIGINS,
     DEFAULT_TENANT_ORG_ID,
     POD_ID,
@@ -75,7 +78,10 @@ from ..common.config import (
     SENTRY_ENVIRONMENT,
     SENTRY_TRACES_SAMPLE_RATE,
     STORE_PATH,
+    SUMMARY_MAX_TOKENS,
+    SUMMARY_TEXT_MAX_CHARS,
     TOP_K_VECTOR,
+    TRACE_MAX_TOP_K,
 )
 from ..graphs import graph_label, graph_paths
 from ..registry import REGISTRY
@@ -100,7 +106,7 @@ from .models import (
     TraceResponseRead,
 )
 from .onboarding import router as onboarding_router
-from .ratelimit import LLM_RATE_LIMIT, limiter
+from .ratelimit import LLM_RATE_LIMIT, limiter, trace_rate_guard
 from .routing import TenantRoutingMiddleware
 from .webhooks import router as webhooks_router
 
@@ -377,24 +383,26 @@ def suggestions_from(hubs, limit: int) -> list[dict]:
     return picked
 
 
-def _complete(prompt: str) -> str:
+def _complete(prompt: str, max_tokens: int) -> str:
     """One deterministic completion from the general model, trimmed."""
     client, model = general_client()
     reply = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
+        max_tokens=max_tokens,
     )
     return (reply.choices[0].message.content or "").strip()
 
 
-def _stream_completion(prompt: str):
+def _stream_completion(prompt: str, max_tokens: int):
     """The general model's completion, yielded in the pieces it arrives in."""
     client, model = general_client()
     chunks = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
+        max_tokens=max_tokens,
         stream=True,
     )
     for chunk in chunks:
@@ -406,7 +414,9 @@ def _stream_completion(prompt: str):
             yield piece
 
 
-def _cached_completion(cache, key: str, prompt: str | None, field: str, *, without_prompt: str = "") -> dict:
+def _cached_completion(
+    cache, key: str, prompt: str | None, field: str, *, max_tokens: int, without_prompt: str = ""
+) -> dict:
     """``{field: text, "cached": ...}`` from ``cache`` or, failing that, the model.
 
     A ``prompt`` of ``None`` means there is nothing to ask, and the reply is
@@ -419,7 +429,7 @@ def _cached_completion(cache, key: str, prompt: str | None, field: str, *, witho
     if prompt is None:
         return {field: without_prompt, "cached": False}
     try:
-        text = _complete(prompt)
+        text = _complete(prompt, max_tokens)
     except Exception as exc:  # noqa: BLE001 - the caller reads the error field
         logger.warning("the model gave no %s: %s", field, exc)
         return {field: "", "cached": False, "error": str(exc)}
@@ -435,7 +445,7 @@ def _prepared_answer(req) -> tuple[str, str | None, str | None]:
     """
     key = _answer_key(req.query, req.context)
     remembered = ANSWER_CACHE.get(key)
-    context = (req.context or "").strip()
+    context = (req.context or "").strip()[:ANSWER_CONTEXT_MAX_CHARS]
     return key, remembered, (_answer_prompt(req.query, context) if context else None)
 
 
@@ -460,10 +470,13 @@ def summarize(
     _user: str = Depends(get_current_user),
 ) -> dict:
     """A one-sentence summary of a note, remembered per key and text."""
-    text = (req.text or "").strip()
+    text = (req.text or "").strip()[:SUMMARY_TEXT_MAX_CHARS]
     if not text:
         return {"summary": "", "cached": False}
-    return _cached_completion(SUMMARY_CACHE, _summary_key(req.key, text), SUMMARY_PROMPT + text, "summary")
+    return _cached_completion(
+        SUMMARY_CACHE, _summary_key(req.key, text), SUMMARY_PROMPT + text, "summary",
+        max_tokens=SUMMARY_MAX_TOKENS,
+    )
 
 
 @model_router.post(
@@ -478,12 +491,13 @@ def answer(
     _user: str = Depends(get_current_user),
 ) -> dict:
     """A short plain-language answer drawn only from the supplied context."""
-    context = (req.context or "").strip()
+    context = (req.context or "").strip()[:ANSWER_CONTEXT_MAX_CHARS]
     return _cached_completion(
         ANSWER_CACHE,
         _answer_key(req.query, req.context),
         _answer_prompt(req.query, context) if context else None,
         "answer",
+        max_tokens=ANSWER_MAX_TOKENS,
         without_prompt=NO_CONTEXT_ANSWER,
     )
 
@@ -505,7 +519,7 @@ def answer_stream(
             return
         sent: list[str] = []
         try:
-            for piece in _stream_completion(prompt):
+            for piece in _stream_completion(prompt, ANSWER_MAX_TOKENS):
                 sent.append(piece)
                 yield piece
         except Exception as exc:  # noqa: BLE001 - the response has already begun
@@ -613,7 +627,8 @@ def create_app(*, engine_factory=None) -> FastAPI:
 
                 shutdown_embed_executor()
 
-    app = FastAPI(title="graphRAG API", version="0.1.0", lifespan=lifespan)
+    docs = {} if API_DOCS_ENABLED else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    app = FastAPI(title="graphRAG API", version="0.1.0", lifespan=lifespan, **docs)
 
     # Per-user limits on the model routes: the limiter lives on the
     # application state, and an exceeded limit becomes a 429.
@@ -640,6 +655,7 @@ def create_app(*, engine_factory=None) -> FastAPI:
         request: Request,
         user_id: str = Depends(get_current_user),
         org_id: str = Depends(get_current_tenant_org),
+        _limited: None = Depends(trace_rate_guard),
     ) -> dict:
         """Run one query and return the ranked nodes, the trace and the context.
 
@@ -650,7 +666,8 @@ def create_app(*, engine_factory=None) -> FastAPI:
         from .. import history as history_module
 
         engine = engine_for(request, org_id)
-        response = await engine.route_async(req.query, req.top_k or TOP_K_VECTOR)
+        top_k = min(max(req.top_k or TOP_K_VECTOR, 1), TRACE_MAX_TOP_K)
+        response = await engine.route_async(req.query, top_k)
 
         payload = asdict(response)
         for node, result in zip(response.results, payload["results"]):

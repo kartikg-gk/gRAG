@@ -859,3 +859,65 @@ def test_the_answer_client_gives_up_after_its_timeout(monkeypatch):
 
     assert model == "m"
     assert client.timeout == ANSWER_TIMEOUT_SECONDS
+
+
+# ==========================================================================
+# limits for a public deployment
+# ==========================================================================
+
+
+def test_an_answer_is_grounded_in_at_most_the_context_cap_and_capped_in_length(client, model):
+    import src.api.app as app_module
+
+    oversized = "§" * (app_module.ANSWER_CONTEXT_MAX_CHARS + 5_000)
+    assert client.post("/api/answer", json={"query": "q", "context": oversized}).status_code == 200
+
+    sent = model.calls[0]
+    prompt = sent["messages"][0]["content"]
+    assert prompt.count("§") == app_module.ANSWER_CONTEXT_MAX_CHARS
+    assert sent["max_tokens"] == app_module.ANSWER_MAX_TOKENS
+
+
+def test_a_streamed_answer_is_capped_in_length_too(client, model):
+    import src.api.app as app_module
+
+    model.stream_parts = ["one ", "two"]
+    body = client.post("/api/answer/stream", json={"query": "q", "context": "some context"}).text
+    assert body == "one two"
+    assert model.calls[0]["max_tokens"] == app_module.ANSWER_MAX_TOKENS
+
+
+def test_a_summary_reads_at_most_the_text_cap_and_is_capped_in_length(client, model):
+    import src.api.app as app_module
+
+    oversized = "§" * (app_module.SUMMARY_TEXT_MAX_CHARS + 1_000)
+    client.post("/api/summarize", json={"key": "k", "text": oversized})
+
+    sent = model.calls[0]
+    assert sent["messages"][0]["content"].count("§") == app_module.SUMMARY_TEXT_MAX_CHARS
+    assert sent["max_tokens"] == app_module.SUMMARY_MAX_TOKENS
+
+
+def test_a_trace_asks_for_no_more_than_the_top_k_cap(client, engine):
+    import src.api.app as app_module
+
+    client.post("/api/trace", json={"query": "who", "top_k": 100_000})
+    client.post("/api/trace", json={"query": "who", "top_k": -3})
+    assert [k for _, k in engine.queries] == [app_module.TRACE_MAX_TOP_K, 1]
+
+
+def test_traces_past_the_rate_are_refused(client, monkeypatch):
+    import src.api.ratelimit as ratelimit
+
+    monkeypatch.setattr(ratelimit, "_TRACE_LIMIT", ratelimit.parse("2/minute"))
+    codes = [client.post("/api/trace", json={"query": "who"}).status_code for _ in range(3)]
+    assert codes == [200, 200, 429]
+
+
+def test_the_api_pages_can_be_switched_off(monkeypatch, engine):
+    import src.api.app as app_module
+
+    monkeypatch.setattr(app_module, "API_DOCS_ENABLED", False)
+    with TestClient(create_app(engine_factory=lambda: engine)) as quiet:
+        assert [quiet.get(path).status_code for path in ("/docs", "/redoc", "/openapi.json")] == [404, 404, 404]
+        assert quiet.get("/api/health").status_code == 200
