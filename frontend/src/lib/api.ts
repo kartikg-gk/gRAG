@@ -292,14 +292,9 @@ export function normalizeType(type: string | null | undefined): EntityType {
 
 export function extractNodeIds(log: ApiTraceLog | null | undefined): string[] {
   if (!log) return [];
-  const ids = new Set<string>();
-  for (const id of log.execution_path.vector_seeds) ids.add(id);
-  for (const id of log.execution_path.linked_seeds) ids.add(id);
-  for (const hop of log.execution_path.graph_hops) {
-    ids.add(hop.from_id);
-    ids.add(hop.to_id);
-  }
-  return [...ids];
+  const { vector_seeds, linked_seeds, graph_hops } = log.execution_path;
+  const hops = graph_hops.flatMap(({ from_id, to_id }) => [from_id, to_id]);
+  return Array.from(new Set([...vector_seeds, ...linked_seeds, ...hops]));
 }
 
 export function allTraceNodeIds(response: ApiTraceResponse): string[] {

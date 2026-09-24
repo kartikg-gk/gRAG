@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { BarChart3, ExternalLink, FileText, Info, Link2, X } from "lucide-react";
 
 import { EntityIcon } from "@/components/graph/EntityIcon";
-import { summarize } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { TraceNode } from "@/types/trace";
 
@@ -26,9 +25,10 @@ interface NodeInspectorProps {
   activeGraphId?: string;
   maxHeight: () => number;
   onClose: () => void;
+  summarize?: (key: string, text: string) => Promise<{ summary: string; error?: string | null }>;
 }
 
-export function NodeInspector({ node, activeGraphId, maxHeight, onClose }: NodeInspectorProps) {
+export function NodeInspector({ node, activeGraphId, maxHeight, onClose, summarize }: NodeInspectorProps) {
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [summary, setSummary] = useState<string>();
   const [summaryFailed, setSummaryFailed] = useState(false);
@@ -44,7 +44,7 @@ export function NodeInspector({ node, activeGraphId, maxHeight, onClose }: NodeI
     const current = ++requestRef.current;
     setSummary(undefined);
     setSummaryFailed(false);
-    if (!sourceText) {
+    if (!sourceText || !summarize) {
       setLoading(false);
       return;
     }
@@ -65,7 +65,7 @@ export function NodeInspector({ node, activeGraphId, maxHeight, onClose }: NodeI
         if (requestRef.current === current) setLoading(false);
       });
     return () => { requestRef.current += 1; };
-  }, [node.id, sourceText]);
+  }, [node.id, sourceText, summarize]);
 
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
@@ -132,7 +132,7 @@ export function NodeInspector({ node, activeGraphId, maxHeight, onClose }: NodeI
           <h3 className="inspector-title"><FileText size={16} /> Summary</h3>
           {loading ? <div className="space-y-2" role="status" aria-live="polite" aria-label="Loading summary"><div className="h-3 w-full animate-pulse rounded-sm bg-raised" /><div className="h-3 w-5/6 animate-pulse rounded-sm bg-raised" /><div className="h-3 w-2/3 animate-pulse rounded-sm bg-raised" /></div>
             : !sourceText ? <p className="text-sm text-ink-dim">No summary for this node</p>
-              : <p className={cn("text-sm leading-6 text-ink-dim", summaryFailed && "line-clamp-6")}>{summaryFailed ? sourceText : summary}</p>}
+              : <p className={cn("text-sm leading-6 text-ink-dim", summaryFailed && "line-clamp-6")}>{!summarize || summaryFailed ? sourceText : summary}</p>}
         </section>
         <section className="inspector-section">
           <h3 className="inspector-title"><Info size={16} /> Metadata</h3>
@@ -148,7 +148,7 @@ export function NodeInspector({ node, activeGraphId, maxHeight, onClose }: NodeI
         <section className="inspector-section">
           <h3 className="inspector-title"><Link2 size={16} /> Source</h3>
           {provenance ? <p className="mb-2 text-xs text-ink-muted">Repository · <span className="font-mono text-ink-dim">{provenance}</span></p> : null}
-          {sourceUrl && activeGraphId ? <a href={sourceUrl} target="_blank" rel="noreferrer" className="break-all text-sm text-blue underline decoration-blue/40 underline-offset-4">{sourceUrl}</a> : <p className="text-sm text-ink-dim">No source link</p>}
+          {sourceUrl ? <a href={sourceUrl} target="_blank" rel="noreferrer" className="break-all text-sm text-blue underline decoration-blue/40 underline-offset-4">{sourceUrl}</a> : <p className="text-sm text-ink-dim">No source link</p>}
         </section>
       </div>
     </aside>

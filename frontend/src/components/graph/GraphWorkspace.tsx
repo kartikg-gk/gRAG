@@ -20,6 +20,7 @@ interface GraphWorkspaceProps {
   trace: TraceState;
   activeGraphId?: string;
   citationFocus?: CitationFocusRequest;
+  summarize?: (key: string, text: string) => Promise<{ summary: string; error?: string | null }>;
 }
 
 function EntityNode({ data, selected }: NodeProps<TraceNode>) {
@@ -103,7 +104,7 @@ function CanvasControls({ neighbours }: { neighbours: NeighbourToggle }) {
   );
 }
 
-function GraphWorkspaceInner({ trace, activeGraphId, citationFocus }: GraphWorkspaceProps) {
+function GraphWorkspaceInner({ trace, activeGraphId, citationFocus, summarize }: GraphWorkspaceProps) {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<TraceNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -168,7 +169,7 @@ function GraphWorkspaceInner({ trace, activeGraphId, citationFocus }: GraphWorks
         <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="rgb(var(--m-ink-muted) / .25)" />
         <CanvasControls neighbours={{ shown: showNeighbours, hidden: hiddenNeighbours, onToggle: () => setShowNeighbours((value) => !value) }} />
       </ReactFlow>
-      {selectedNode ? <NodeInspector node={selectedNode} activeGraphId={activeGraphId} maxHeight={maxInspectorHeight} onClose={() => setSelectedId(undefined)} /> : null}
+      {selectedNode ? <NodeInspector node={selectedNode} activeGraphId={activeGraphId} maxHeight={maxInspectorHeight} onClose={() => setSelectedId(undefined)} summarize={summarize} /> : null}
     </div>
   );
 }

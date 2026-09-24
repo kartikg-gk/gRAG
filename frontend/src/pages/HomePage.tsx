@@ -3,6 +3,7 @@ import { CornerDownLeft, LoaderCircle, Search, Sparkles } from "lucide-react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 
 import { GraphWorkspace } from "@/components/graph/GraphWorkspace";
+import { summarize } from "@/lib/api";
 import type { ShellOutletContext } from "@/components/shell/AppShell";
 import { useStudio } from "@/contexts/StudioContext";
 
@@ -69,7 +70,7 @@ export function HomePage() {
         </div>
       </div>
       <div className="relative min-h-0 flex-1" aria-label="Trace graph canvas">
-        <GraphWorkspace trace={trace} activeGraphId={activeGraphId ?? undefined} citationFocus={citationFocus ?? undefined} />
+        <GraphWorkspace trace={trace} activeGraphId={activeGraphId ?? undefined} citationFocus={citationFocus ?? undefined} summarize={summarize} />
         {trace.id === "idle-trace" && !retrieving ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><p className="rounded-sm border border-line bg-panel/90 px-4 py-2 text-sm text-ink-muted">Run a trace to explore the graph.</p></div> : null}
         {answer !== null ? (
           <section className="absolute bottom-4 left-4 right-4 z-10 max-h-36 overflow-y-auto rounded-sm border border-line bg-panel/95 p-4 shadow-none backdrop-blur md:left-auto md:w-[520px]" aria-label="Answer" aria-live="polite" aria-busy={answerStreaming}>
