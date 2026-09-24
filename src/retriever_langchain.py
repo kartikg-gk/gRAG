@@ -136,19 +136,15 @@ def routed_documents(response) -> list[Document]:
     from .retrieval.response import format_page_content
 
     seen: set[str] = set()
-    return [
-        Document(
+    converted = []
+    for node in response.results:
+        scores = {field: getattr(node, field)
+                  for field in ("score_total", "score_vector", "score_graph")}
+        converted.append(Document(
             page_content=format_page_content(node, seen),
-            metadata={
-                "id": node.id,
-                "score_total": node.score_total,
-                "score_vector": node.score_vector,
-                "score_graph": node.score_graph,
-                "trace_log": response.trace_log,
-            },
-        )
-        for node in response.results
-    ]
+            metadata=dict(id=node.id, trace_log=response.trace_log, **scores),
+        ))
+    return converted
 
 
 class GraphRetriever(BaseRetriever):

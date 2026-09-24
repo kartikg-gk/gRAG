@@ -1,19 +1,9 @@
-"""M1 — the minimal trace viewer.
-
-Reads a trace and prints it. Deliberately plain: a header, a table of retrieved
-items, and the relations between them.
-
-This exists to prove the schema is sufficient. If something about a run cannot
-be shown here, the schema is missing a field — which is why the viewer was
-built before anything that writes traces.
-
-    python -m src.tracing example_trace.json
-"""
+"""Text rendering for traces, also available through python -m graphrag.tracing."""
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+import sys
 
 from .classify import DEFAULT_THRESHOLD, is_used
 from .schema import STATUS_ERROR, Span, Trace
@@ -210,29 +200,11 @@ def render_file(path: str | Path, *, threshold: float = DEFAULT_THRESHOLD) -> st
     return render(load(path), threshold=threshold)
 
 
-def _program_name() -> str:
-    """What to call this command in a usage line.
-
-    Installed as a console script, ``argv[0]`` is the command a person typed.
-    Run as ``python -m src.tracing`` it is the package's ``__main__.py``, which
-    nobody can type back, so that case names the module form instead.
-    """
-    name = Path(sys.argv[0]).name
-    if not name or name.endswith(".py"):
-        return "python -m src.tracing"
-    return name
-
-
 def main(argv: list[str] | None = None) -> int:
-    """Render one trace file. The entry point behind the console command.
-
-    Every failure leaves by a ``return``, never by an exception: a person who
-    typed a wrong filename gets a sentence, not a stack trace of this package's
-    internals.
-    """
+    """Render one trace in the terminal, preserving the original text workflow."""
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 1:
-        print(f"usage: {_program_name()} <trace.json>", file=sys.stderr)
+        print("usage: python -m graphrag.tracing <trace.json>", file=sys.stderr)
         return 2
     try:
         print(render_file(args[0]))
@@ -240,13 +212,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no such trace file: {args[0]}", file=sys.stderr)
         return 1
     except OSError as exc:
-        # A directory, a permission denial, an unreadable device.
         print(f"could not read {args[0]}: {exc}", file=sys.stderr)
         return 1
     except (ValueError, KeyError, TypeError) as exc:
-        # ValueError covers malformed JSON and an unknown schema version;
-        # KeyError a missing required field; TypeError a file whose JSON is
-        # valid but is not an object at all.
         print(f"not a readable trace: {exc}", file=sys.stderr)
         return 1
     return 0
