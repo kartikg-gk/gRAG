@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir --user --upgrade pip && \
 COPY --chown=app pyproject.toml README.md ./
 COPY --chown=app src ./src
 COPY --chown=app examples ./examples
-RUN pip install --no-cache-dir --user ".[api,graph,embeddings,judge,sentry]"
+RUN pip install --no-cache-dir --user ".[backend,api,graph,embeddings,judge,sentry]"
 
 # Fetch the embedding model at build time, so the first request does not wait
 # on a download.

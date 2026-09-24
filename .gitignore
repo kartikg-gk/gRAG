@@ -3,8 +3,7 @@ __pycache__/
 *.py[cod]
 .env
 
-# Tests live on disk and run locally; they are not tracked.
-src/tests/
+# Test sources are versioned; generated caches and run artifacts are not.
 .pytest_cache/
 .coverage
 .coverage.*
@@ -34,6 +33,8 @@ celerybeat-schedule*
 
 # Documentation and instruction files stay local, untracked.
 *.md
+!/docs/trace-format.md
+!/docs/*.md
 # except the root one, which the outside world reads. Anchored with a leading
 # slash: a bare "!README.md" would also un-ignore any package-level file.
 !/README.md
@@ -41,7 +42,11 @@ celerybeat-schedule*
 # Build artifacts.
 build/
 dist/
+/src/tracing/ui/
 *.egg-info/
 builds/
 # What `graphrag trace` writes by default.
 trace_out/
+graphrag_out/
+.uv-cache/
+/frontend/.test-build/

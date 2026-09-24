@@ -3,173 +3,48 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "graphrag"
+name = "grag-trace-viewer"
 version = "0.1.0"
-description = "A repository knowledge graph, and a trace of what retrieval actually used."
-requires-python = ">=3.12"
-
-# The root README is the one documentation file that is tracked; everything
-# else under *.md stays local. It is empty for now, which setuptools accepts —
-# and it has to be tracked for this key to mean anything, since a missing
-# readme is dropped silently rather than raising.
+description = "Local GitHub repository tracing with a bundled interactive graph viewer."
 readme = "README.md"
-
-# Runtime dependencies. Nine, and each earns its place:
-#
-#   httpx      — src/ingestion/github.py. The GitHub REST client. Chosen over
-#                urllib for connection reuse across the hundreds of per-pull-
-#                request enrichment calls a single ingest makes.
-#   pydantic   — src/ingestion/models.py. Validates GitHub's payloads at the
-#                boundary, so a shape change surfaces at parse time rather
-#                than as an AttributeError three modules later.
-#   sqlmodel   — src/models/. The control plane's tables are declared once and
-#                shared by everything that reads them, and the declaration is
-#                also the typed object every consumer gets back from a query.
-#                Required rather than optional because the reconcile pass, the
-#                worker and boot-time hydration all need them, and none of
-#                those is optional.
-#   sqlalchemy — underneath it, and named here rather than inherited because
-#                the parts the models reach for directly — an explicitly named
-#                foreign key added after both tables exist, a partial unique
-#                index — are its own, not the layer above it.
-#   psycopg    — the driver for the database those tables live in. A control
-#                plane held in a local file cannot be shared by processes on
-#                different machines, which is the whole of what the pod and
-#                assignment tables express.
-#   celery     — src/worker/. Runs the compile off the request path, on a
-#                queue that survives the process that filled it. The redis
-#                extra is what lets it use the instance already here rather
-#                than needing a second service of its own.
-#   redis      — src/worker/. Holds which organisations are waiting to be
-#                recompiled and when they are due. Required because the
-#                compile path's whole guarantee — a burst of twenty events
-#                producing one build — rests on a read-and-remove that one
-#                server performs as a single operation, and there is no
-#                in-process substitute for that.
-#   python-dotenv — src/common/environment.py. Loads .env into the process
-#                environment before any setting is read. Every entry point
-#                reads its settings at import, so without it a value written
-#                only to the file is absent, and absent fails by defaulting
-#                rather than by raising.
-#   slowapi    — src/api/ratelimit.py. The per-user limit on the routes that
-#                call a paid model, counted in memory per process.
-#
-# The database and queue clients are the reason the runtime set is no longer
-# small enough to be pinned by a test. That pin is gone; see the note in
-# test_packaging.py.
-#
-# src/tracing/ needs none of these. It is standard library only, which is what
-# makes the tracing package copyable on its own — see
-# test_tracing_is_standalone.py.
-dependencies = [
-    "httpx>=0.28,<0.29",
-    "pydantic>=2.13,<3",
-    "sqlmodel>=0.0.16",
-    "sqlalchemy>=2.0,<3",
-    "psycopg[binary]>=3.2,<4",
-    "celery[redis]>=5.4,<6",
-    "redis>=5,<7",
-    "python-dotenv>=1.0,<2",
-    "slowapi>=0.1.9",
-    "cryptography>=43,<47",
-]
+requires-python = ">=3.12"
+# Local GitHub ingestion dependencies. The tracing/viewer modules use only stdlib.
+dependencies = ["httpx>=0.28,<0.29", "pydantic>=2.13,<3", "python-dotenv>=1.0,<2"]
 
 [project.optional-dependencies]
-# The LangGraph adapter is one file (src/tracing_langgraph.py) and is a sibling
-# of src/tracing/, not a member of it, precisely so this dependency stays
-# optional and the package below it stays stdlib-only.
-adapter = ["langchain-core>=1.5,<2"]
-
-# examples/graph_demo.py builds a real StateGraph so the adapter's node spans
-# and callback propagation are exercised rather than asserted. Nothing in the
-# library imports this.
-examples = ["langgraph>=1.2,<2"]
-
-# Error reporting, switched on only when GRAPHRAG_SENTRY_DSN is set. Nothing
-# imports it otherwise.
-sentry = ["sentry-sdk[fastapi]>=2.0.0"]
-
-# The statistical half of entity extraction. Optional because the rule stage —
-# ticket references, pull request references, service names — is stdlib-only
-# and is the high-precision half; without spaCy the extractor still returns
-# those, and records `source` as "none" so a rules-only result is never
-# mistaken for a model that found nothing. The en_core_web_sm model is a
-# separate download and is not expressible here:
-#     python -m spacy download en_core_web_sm
-extraction = ["spacy>=3.7,<4"]
-
-# Entity resolution embeds with a sentence-transformer. Not optional in any
-# meaningful sense any more — it is the only embedder — but it stays in a group
-# because it drags in torch, and a consumer who only wants the tracing package
-# should not pay for that. `dev` installs it, and so must CI: there is no
-# lighter default to fall back to.
-embeddings = ["sentence-transformers>=5,<6"]
-
-# The graph store: an embedded graph database with Cypher and a vector
-# extension, so the store needs no server and no separate vector database.
-# Deliberately unpinned.
-graph = ["ladybug"]
-
-# The client for the two closed questions in src/common/judge.py — the
-# ingest-path merge question and the query-path intent question. One library
-# covers both, because both endpoints speak the same chat API and differ only
-# by URL and model.
-#
-# Optional because every consumer already treats an absent judge exactly as it
-# treats a failed call: resolution creates a new entity, classification falls
-# back to conceptual. The import is inside each factory rather than at module
-# scope, so `import src.common.judge` succeeds with this uninstalled and only a
-# call fails — which is what keeps this out of the runtime list above. See test_the_module_imports_with_the_client_library_absent.
-judge = ["openai>=3.3,<4"]
-
-# The HTTP surface (src/api/) and the two checks in front of it. Optional
-# because nothing else in the project imports src.api: the library is usable
-# as a library, and only serving it over HTTP needs a web framework.
-#
-# PyJWT carries the `crypto` extra because RS256 verification needs a real
-# asymmetric implementation. That extra is not decoration — without it the
-# only algorithms available are the HMAC family, which is precisely the set
-# this code refuses to accept.
-api = [
-    "fastapi>=0.115,<1",
-    "uvicorn>=0.32,<1",
-    "pyjwt[crypto]>=2.9,<3",
+backend = [
+    "sqlmodel>=0.0.16", "sqlalchemy>=2.0,<3", "psycopg[binary]>=3.2,<4",
+    "celery[redis]>=5.4,<6", "redis>=5,<7", "slowapi>=0.1.9", "cryptography>=43,<47",
 ]
-
-
+adapter = ["langchain-core>=1.5,<2"]
+examples = ["langgraph>=1.2,<2"]
+extraction = ["spacy>=3.7,<4"]
+embeddings = ["sentence-transformers>=5,<6"]
+graph = ["ladybug"]
+judge = ["openai>=3.3,<4"]
+api = ["fastapi>=0.115,<1", "uvicorn>=0.32,<1", "pyjwt[crypto]>=2.9,<3"]
+sentry = ["sentry-sdk[fastapi]>=2.0.0"]
 dev = [
     "pytest>=9,<10",
-    "graphrag[adapter,examples,embeddings,graph,judge,api]",
+    "grag-trace-viewer[adapter,examples,embeddings,graph,judge,api,backend]",
 ]
 
 [project.scripts]
-# The full command surface: ingest and view.
-graphrag = "graphrag.cli:main"
-# Read a trace file path, start the viewer. Deliberately a separate entry point
-# into the stdlib-only package — it runs even when the ingestion dependencies
-# are not installed.
-graphrag-view = "graphrag.tracing.viewer:main"
+graphrag = "graphrag.entry:main"
+graphrag-view = "graphrag.tracing.web:main"
+graphrag-github-trace = "graphrag.local_github:main"
+graphrag-backend = "graphrag.cli:main"
 
-# The source tree is a flat `src/` directory whose modules import each other
-# relatively, so it installs under a real distribution name without a single
-# import statement changing. In-repo tests keep importing `src.` from the
-# project root; both names reach the same code.
-#
-# Packages are listed rather than auto-discovered so that adding a directory
-# under src/ is a decision, not an accident — and so src/tests never ships.
+# Source tests import src; the distribution installs these modules as graphrag.
 [tool.setuptools]
 package-dir = { "graphrag" = "src" }
+include-package-data = false
 packages = [
-    "graphrag",
-    "graphrag.analysis",
-    "graphrag.api",
-    "graphrag.common",
-    "graphrag.graphdb",
-    "graphrag.models",
-    "graphrag.ingestion",
-    "graphrag.knowledge",
-    "graphrag.repository",
-    "graphrag.retrieval",
-    "graphrag.tracing",
-    "graphrag.worker",
+    "graphrag", "graphrag.adapters", "graphrag.analysis", "graphrag.api",
+    "graphrag.common", "graphrag.graphdb", "graphrag.models", "graphrag.ingestion",
+    "graphrag.knowledge", "graphrag.repository", "graphrag.retrieval",
+    "graphrag.tracing", "graphrag.worker",
 ]
+
+[tool.setuptools.package-data]
+"graphrag.tracing" = ["ui/viewer.html", "ui/assets/*"]

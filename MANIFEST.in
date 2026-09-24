@@ -1,0 +1,3 @@
+recursive-include src/tracing/ui *
+include docs/trace-format.md
+include docs/trace.schema.json
