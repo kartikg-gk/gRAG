@@ -39,5 +39,7 @@ ENV GRAPHRAG_STORE_PATH=/home/app/data/graphs/graph.lbug \
     GRAPHRAG_ARTIFACT_ROOT=/home/app/data/artifacts \
     GRAPHRAG_POD_CACHE_ROOT=/home/app/data/cache
 
+# Listens on $PORT when the platform sets one (Cloud Run does), else 8000.
+# exec replaces the shell, so uvicorn receives the platform's stop signal.
 EXPOSE 8000
-CMD ["uvicorn", "graphrag.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["sh", "-c", "exec uvicorn graphrag.api.app:create_app --factory --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
