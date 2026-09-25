@@ -27,6 +27,16 @@ The first command installs it. The second reads the repository's recent pull req
 
 The map shows the pull requests, issues, commits and people behind the answer and how they connect. Below it, **Retrieved vs used** marks which items the answer actually draws on, then the steps taken and the answer itself. Open a folder instead of a file to switch between saved questions.
 
+## What the numbers mean
+
+| Number | Meaning |
+| --- | --- |
+| **Combined score** | `(α·vector + β·graph) × recency`; α and β set by question type |
+| **Vector similarity** | Cosine similarity between question and item embeddings |
+| **Graph relevance** | Best path score from the question's seed nodes: product of edge weights along the path |
+| **Recency** | `max(floor, 0.5^(age / half-life))`, with a half-life per entity type; 1.000 = undated or brand new |
+| **Age** | Days since the item's event timestamp |
+
 ## How links are scored
 
 Each link carries a weight for how much it proves, and a path through the graph scores the product of its links. Links read from GitHub's own records are trusted most; links read out of prose are trusted least.
