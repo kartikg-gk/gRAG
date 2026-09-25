@@ -1142,3 +1142,68 @@ def test_read_pool_is_clamped_to_one_connection(tmp_path, size):
         assert graph.count_nodes() == 0
     finally:
         graph.close()
+
+
+# -- vector extension before the file opens ----------------------------------
+
+
+class _FakeLadybug:
+    """Records the order of engine calls; a file open fails without the install."""
+
+    def __init__(self, *, offline: bool = False) -> None:
+        self.calls: list[str] = []
+        self.installed = False
+        self.offline = offline
+        fake = self
+
+        class Database:
+            def __init__(self, path, read_only=False):
+                fake.calls.append(f"open {path}")
+                if path != ":memory:" and not fake.installed:
+                    raise RuntimeError("Failed to load library: libvector")
+
+        class Connection:
+            def __init__(self, database):
+                pass
+
+            def execute(self, statement):
+                fake.calls.append(statement)
+                if statement == "INSTALL vector":
+                    if fake.offline:
+                        raise RuntimeError("no network")
+                    fake.installed = True
+
+        self.Database = Database
+        self.Connection = Connection
+
+
+def test_vector_extension_installed_before_graph_file_opens(monkeypatch, tmp_path):
+    import src.graphdb.context_graph as module
+
+    fake = _FakeLadybug()
+    monkeypatch.setattr(module, "_vector_installed", False)
+    monkeypatch.setitem(__import__("sys").modules, "ladybug", fake)
+    path = str(tmp_path / "graph.lbug")
+    # Without the install first, the fake's file open raises like the engine.
+    ContextGraph(path)
+    assert fake.calls[:2] == ["open :memory:", "INSTALL vector"]
+    assert f"open {path}" in fake.calls
+
+
+def test_vector_extension_install_is_once_per_process(monkeypatch):
+    import src.graphdb.context_graph as module
+
+    fake = _FakeLadybug()
+    monkeypatch.setattr(module, "_vector_installed", False)
+    assert module.install_vector_extension(fake) is True
+    assert module.install_vector_extension(fake) is True
+    assert fake.calls.count("INSTALL vector") == 1
+
+
+def test_vector_extension_offline_reports_failure(monkeypatch):
+    import src.graphdb.context_graph as module
+
+    fake = _FakeLadybug(offline=True)
+    monkeypatch.setattr(module, "_vector_installed", False)
+    assert module.install_vector_extension(fake) is False
+    assert module._vector_installed is False

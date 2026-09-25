@@ -32,6 +32,11 @@ RUN pip install --no-cache-dir --user ".[backend,api,graph,embeddings,judge,sent
 # on a download.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
+# The graph engine's vector extension, for the same reason: a graph file with a
+# vector index loads it while opening, so a container that has to fetch it at
+# start-up depends on the network to start at all. Fail the build instead.
+RUN python -c "from graphrag.graphdb.context_graph import install_vector_extension as i; import sys; sys.exit(0 if i() else 1)"
+
 # Where graphs, built artifacts and each pod's downloaded copies live. The
 # compose file mounts shared volumes over the first two.
 RUN mkdir -p /home/app/data/graphs /home/app/data/artifacts /home/app/data/cache

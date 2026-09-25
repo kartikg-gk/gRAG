@@ -73,6 +73,32 @@ _EXPECTED_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 
+_vector_installed = False
+
+
+def install_vector_extension(ladybug=None) -> bool:
+    """Put the vector extension on disk before any graph file is opened.
+
+    A file that carries a vector index loads the extension while it opens, so
+    it has to be installed first: installing it from a connection to that file
+    comes too late, and a fresh container fails at start-up. Installing goes
+    through a throwaway in-memory database. Once per process; offline, it
+    reports failure and leaves the open to say what is missing.
+    """
+    global _vector_installed
+    if _vector_installed:
+        return True
+    if ladybug is None:
+        import ladybug
+    try:
+        connection = ladybug.Connection(ladybug.Database(":memory:"))
+        connection.execute("INSTALL vector")
+    except Exception:
+        return False
+    _vector_installed = True
+    return True
+
+
 class ContextGraph:
     """Persistence and retrieval for the knowledge graph.
 
@@ -102,6 +128,7 @@ class ContextGraph:
         # The engine replays its write-ahead log and checkpoints on connect, so
         # an ordinary open changes the file before any statement runs. A tool
         # that only reads cannot otherwise show that it only read.
+        install_vector_extension(ladybug)
         self._database = ladybug.Database(self.path, read_only=read_only)
 
         # One writer, serialised. The lock covers schema changes and index
