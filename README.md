@@ -1,104 +1,81 @@
 # graphweave
 
-Ask a question about any public GitHub repository and see the answer as a map of the pull requests, issues, commits and people behind it.
+Most of what a retrieval step returns never makes it into the answer. You still pay for all of it: in tokens, in time, and in more places for the model to latch onto the wrong thing. Logs show what was fetched. They don't show what was used.
 
-Everything runs on your computer. graphweave only talks to GitHub, to read the repository's recent activity.
+graphweave shows both. It lays out everything a run retrieved as a map, then checks each item against the final answer and marks it **used** or **unused** by word overlap. No second model grades the evidence, no score is guessed, and nothing leaves your machine.
+
+Point it at any public GitHub repository and ask a question to see it work.
+
+![How graphweave works](arch.png)
 
 ## What you need
 
-- Python 3.12 or newer. Check with `python --version`.
-- The name of a public GitHub repository, written as `owner/name`, for example `psf/requests`.
+- Python 3.12 or newer
+- A public GitHub repository, written as `owner/name`
 
 ## Get started
 
-**1. Install graphweave**
-
 ```bash
 pip install grag-trace-viewer
-```
-
-**2. Ask a question**
-
-Put the repository first, then your question in quotes:
-
-```bash
 graphrag-github-trace psf/requests "What changed in how sessions handle retries?"
-```
-
-graphweave reads the repository's latest pull requests, issues and commits, prints the ones that best match your question, and saves the full result to `graphrag_out/trace_state.json`.
-
-**3. Open the map**
-
-```bash
 graphrag graphrag_out/trace_state.json
 ```
 
-Your browser opens at `http://127.0.0.1:4630`. Click anything on the map to see its details. The map is served from your own computer, so nobody else can see it. Press `Ctrl+C` in the terminal to close it.
+The first command installs it. The second reads the repository's recent pull requests, issues and commits and saves what matches your question. The third opens the result in your browser at `http://127.0.0.1:4630`.
+
+## In your browser
+
+The map shows the pull requests, issues, commits and people behind the answer and how they connect. Below it, **Retrieved vs used** marks which items the answer actually draws on, then the steps taken and the answer itself. Open a folder instead of a file to switch between saved questions.
+
+## How links are scored
+
+Each link carries a weight for how much it proves, and a path through the graph scores the product of its links. Links read from GitHub's own records are trusted most; links read out of prose are trusted least.
+
+| Strength | Links | Comes from |
+| --- | --- | --- |
+| Strongest | `AUTHORED`, `RESOLVES` | who wrote it; "Fixes #N" |
+| Strong | `REVIEWED`, `TOUCHES`, `PART_OF` | submitted reviews; changed files; commit to repo |
+| Medium | `REPORTED`, `MENTIONS` | who opened the issue; named in the text |
+| Weakest | `CO_OCCURS` | names near each other in text (reserved) |
+
+## How duplicates are merged
+
+The same thing gets written many ways: `payment-service`, `payments`, `PaymentService`. Each new name is compared with known ones:
+
+1. **Near-identical:** merged, no model call.
+2. **Close but unsure:** one yes/no question to a model. Any timeout, error or unclear reply counts as *different*.
+3. **Clearly different:** a new entity.
+
+A merge never renames an entity; only its last-seen time moves forward.
+
+## Repository layout
+
+```
+src/
+  ingestion/     GitHub API client: PRs, issues, commits, reviews
+  analysis/      chunking, entity extraction, duplicate merging
+  knowledge/     typed, weighted, timestamped edges
+  graphdb/       LadybugDB store: graph + vector index
+  retrieval/     question type, graph walk, vector search, fusion, recency
+  api/           FastAPI app: trace, answer streaming, history
+  tracing/       trace format, capture(), local viewer server
+  adapters/      LangGraph callback
+  worker/        background ingest and rebuild (hosted mode)
+frontend/        React + Vite: Studio and the bundled local viewer
+tests/           package and viewer tests
+```
 
 ## Good questions to ask
-
-graphweave answers from a repository's recent activity, so questions about who did what, and what changed, work best:
 
 - `"Who has been working on the test suite?"`
 - `"What changed in how errors are reported?"`
 - `"Which pull requests fixed issues about timeouts?"`
-- `"What is being done about Windows support?"`
-
-## Add a GitHub token (recommended)
-
-Without a token, GitHub allows 60 requests an hour, which is enough for a couple of questions. With a token you get 5,000.
-
-1. Go to [github.com/settings/tokens](https://github.com/settings/tokens) and choose **Generate new token**. For public repositories it needs no extra permissions.
-2. Set it in the terminal you are using.
-
-macOS and Linux:
-
-```bash
-export GITHUB_TOKEN=paste_your_token_here
-```
-
-Windows (PowerShell):
-
-```powershell
-$env:GITHUB_TOKEN="paste_your_token_here"
-```
-
-## Look further back
-
-Add any of these to the command in step 2:
-
-| Add | What it does |
-| --- | --- |
-| `--prs 50` | Read the last 50 pull requests (default 15) |
-| `--issues 50` | Read the last 50 issues (default 15) |
-| `--commits 50` | Read the last 50 commits (default 20) |
-| `--reviews` | Include who reviewed each pull request |
-| `--files` | Include which files each pull request changed |
-| `--source` | Also read up to 20 source files from the repository |
-| `--out result.json` | Save the result to a different file |
-
-Reading more uses more of your GitHub allowance, so add a token first.
-
-## Keep several questions
-
-Save each question to its own file in one folder:
-
-```bash
-graphrag-github-trace psf/requests "Who worked on proxies?" --out my-questions/proxies.json
-graphrag-github-trace psf/requests "What changed in SSL handling?" --out my-questions/ssl.json
-```
-
-Then open the whole folder and switch between them:
-
-```bash
-graphrag my-questions/
-```
 
 ## If something goes wrong
 
 | You see | Do this |
 | --- | --- |
-| A message about GitHub's rate limit | Add a token, or wait an hour |
+| A message about GitHub's rate limit | Set a GitHub token in `GITHUB_TOKEN`, or wait an hour |
 | The browser doesn't open | Copy the address printed in the terminal into your browser |
-| "Address already in use" | Use another port: `graphrag graphrag_out/trace_state.json --port 4700` |
-| `graphrag` is not recognized | Close and reopen the terminal after installing. If it still fails, make sure Python's scripts folder is on your PATH |
+| "Address already in use" | Add `--port 4700` |
+| `graphrag` is not recognized | Reopen the terminal after installing |
