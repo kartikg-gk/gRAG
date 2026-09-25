@@ -626,3 +626,19 @@ def test_context_also_gets_an_index_without_an_explicit_build(monkeypatch, opene
         engine.context("q")
 
     assert store.index_builds == [True]
+
+
+@requires_store
+def test_warm_builds_the_index_so_the_first_query_does_not(tmp_path, builder):
+    """Start-up pays for the index; the first request after it does not."""
+    embedder = AxisEmbedder({"alice": 1, "fix the auth check": 2})
+
+    with Engine(tmp_path / "graph", embedder=embedder) as engine:
+        engine.ingest(builder)
+        engine.warm()
+
+        builds = []
+        engine.build_index = lambda **kwargs: builds.append(kwargs)
+        engine.route("alice")
+
+        assert builds == []

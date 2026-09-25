@@ -302,6 +302,11 @@ class Engine:
         return await self.router.aroute(query, top_k)
 
     def warm(self) -> None:
+        # The index is built before the first query otherwise, and that build
+        # is a pass over every row: measured on the demo graph, it made the
+        # first trace after a start take 1.7s against 70ms. Start-up pays it.
+        if not self._indexed:
+            self.build_index()
         self.router.warm()
 
     # -- internals ---------------------------------------------------------
