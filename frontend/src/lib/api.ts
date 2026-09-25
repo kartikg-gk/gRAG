@@ -485,9 +485,16 @@ export function adaptToTraceState(
 
 const EMPTY_SUBGRAPH: ApiSubgraph = { nodes: [], edges: [] };
 
-export async function runTraceQuery(query: string, sessionId?: string): Promise<TraceState> {
+// onContext runs as soon as the trace returns, before the subgraph request, so
+// the answer can start streaming while the graph is still being fetched.
+export async function runTraceQuery(
+  query: string,
+  sessionId?: string,
+  onContext?: (context: string) => void,
+): Promise<TraceState> {
   const started = performance.now();
   const response = await fetchTrace(query, sessionId);
+  onContext?.(response.context);
   const ids = allTraceNodeIds(response);
   const subgraph = ids.length === 0 ? EMPTY_SUBGRAPH : await fetchSubgraph(ids);
   return adaptToTraceState(query, response, subgraph, performance.now() - started);

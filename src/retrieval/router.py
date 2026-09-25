@@ -319,3 +319,12 @@ class RetrievalRouter:
     def warm(self) -> None:
         self._embed("warmup query")
         self._entities("warmup query")
+        # The first search, walk and document read each pay a one-off cost of
+        # their own: measured, the first trace after a start took 1.7s and the
+        # next 70ms. Run each once here, without the judge, which is a network
+        # call and warms nothing in this process.
+        meta: dict[str, dict] = {}
+        pool = self._vector_hits("warmup query", meta)
+        seeds = [node_id for node_id, _ in pool[:SEED_TOP_N]]
+        self._graph_stream(seeds, meta)
+        self.store.documents_for_entities(seeds)

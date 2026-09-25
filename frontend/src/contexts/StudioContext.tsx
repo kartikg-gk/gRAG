@@ -261,26 +261,32 @@ export function StudioProvider({ children, identity = { userId: null, email: nul
     }
 
     try {
-      const nextTrace = await runTraceQuery(query, sessionId);
+      // The answer needs only the trace's context, not the subgraph, so it
+      // starts streaming as soon as the trace returns.
+      let answering: Promise<void> | null = null;
+      const startAnswer = (context: string) => {
+        if (epoch !== queryEpoch.current || !context?.trim()) return;
+        setAnswer("");
+        setAnswerStreaming(true);
+        answering = streamAnswer(query, context, (text) => {
+          if (epoch === queryEpoch.current) setAnswer(text);
+        })
+          .then(() => undefined)
+          .catch((error) => {
+            if (epoch !== queryEpoch.current) return;
+            console.error("[graphRAG] Answer stream failed", error);
+            setAnswer(null);
+          })
+          .finally(() => {
+            if (epoch === queryEpoch.current) setAnswerStreaming(false);
+          });
+      };
+      const nextTrace = await runTraceQuery(query, sessionId, startAnswer);
       if (epoch !== queryEpoch.current) return;
       setTrace(nextTrace);
       setRetrieving(false);
       retrievingRef.current = false;
-      if (nextTrace.context?.trim()) {
-        setAnswer("");
-        setAnswerStreaming(true);
-        try {
-          await streamAnswer(query, nextTrace.context, (text) => {
-            if (epoch === queryEpoch.current) setAnswer(text);
-          });
-        } catch (error) {
-          if (epoch !== queryEpoch.current) return;
-          console.error("[graphRAG] Answer stream failed", error);
-          setAnswer(null);
-        } finally {
-          if (epoch === queryEpoch.current) setAnswerStreaming(false);
-        }
-      }
+      if (answering) await answering;
     } catch (error) {
       if (epoch !== queryEpoch.current) return;
       console.error("[graphRAG] Trace retrieval failed", error);
