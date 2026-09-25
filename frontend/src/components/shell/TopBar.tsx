@@ -53,7 +53,7 @@ export function TopBar({ graphMenuOpen, onGraphMenuChange, railOpen }: TopBarPro
         <span className="hidden h-7 w-7 items-center justify-center rounded-md border border-line bg-raised text-blue sm:flex">
           <GitBranch size={15} aria-hidden="true" />
         </span>
-        <span className="truncate text-sm font-semibold tracking-[-0.02em] md:text-lg">graphRAG</span>
+        <span className="truncate text-sm font-semibold tracking-[-0.02em] md:text-lg">graphweave</span>
       </div>
       <div className="flex min-w-0 items-center gap-1.5 md:gap-3">
         <div className="relative">
