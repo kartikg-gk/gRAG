@@ -542,6 +542,13 @@ JUDGE_FAST_KEY_VAR = "GRAPHRAG_JUDGE_FAST_KEY"
 #: endpoint takes the question instead.
 JUDGE_TIMEOUT_SECONDS = _env_float("GRAPHRAG_JUDGE_TIMEOUT_SECONDS", 2.0)
 
+#: Whether a query that names nothing and carries no marker is put to a model
+#: at all. Off, it is weighted as conceptual at once, which is the timeout's
+#: fallback anyway. Measured through a hosted router, the question cost
+#: 0.5-1.1s per query, and the model that answered it reliably said
+#: conceptual on every such query tried.
+INTENT_JUDGE_ENABLED = _env_str("GRAPHRAG_INTENT_JUDGE", "1") != "0"
+
 #: Seconds one attempt at an answer or a summary may take before it is
 #: abandoned.
 #:

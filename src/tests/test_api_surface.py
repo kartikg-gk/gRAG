@@ -921,3 +921,36 @@ def test_the_api_pages_can_be_switched_off(monkeypatch, engine):
     with TestClient(create_app(engine_factory=lambda: engine)) as quiet:
         assert [quiet.get(path).status_code for path in ("/docs", "/redoc", "/openapi.json")] == [404, 404, 404]
         assert quiet.get("/api/health").status_code == 200
+
+
+# -- the intent model can be switched off ------------------------------------
+
+
+def _factory_judge(monkeypatch, enabled: bool):
+    import src.analysis as analysis
+    import src.common.config as config
+    import src.common.judge as judge_module
+    import src.engine as engine_module
+    from src.api.app import default_engine_factory
+
+    built = {}
+
+    class FakeEngine:
+        def __init__(self, path, *, embedder, extractor, judge):
+            built["judge"] = judge
+
+    monkeypatch.setattr(config, "INTENT_JUDGE_ENABLED", enabled)
+    monkeypatch.setattr(analysis, "Similarity", lambda: object())
+    monkeypatch.setattr(analysis, "Extractor", lambda: object())
+    monkeypatch.setattr(judge_module, "IntentJudge", lambda: "judge")
+    monkeypatch.setattr(engine_module, "Engine", FakeEngine)
+    default_engine_factory()
+    return built["judge"]
+
+
+def test_intent_judge_is_built_by_default(monkeypatch):
+    assert _factory_judge(monkeypatch, True) == "judge"
+
+
+def test_intent_judge_switched_off_builds_none(monkeypatch):
+    assert _factory_judge(monkeypatch, False) is None

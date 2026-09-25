@@ -225,12 +225,16 @@ def default_engine_factory():
     from ..common.judge import IntentJudge
     from ..engine import Engine
 
+    from ..common.config import INTENT_JUDGE_ENABLED
+
     embedder = Similarity()
     extractor = Extractor()
-    try:
-        judge = IntentJudge()
-    except Exception:
-        judge = None
+    judge = None
+    if INTENT_JUDGE_ENABLED:
+        try:
+            judge = IntentJudge()
+        except Exception:
+            judge = None
     return Engine(STORE_PATH, embedder=embedder, extractor=extractor, judge=judge)
 
 
