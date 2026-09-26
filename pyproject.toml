@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "grag-trace-viewer"
+name = "graphweave"
 version = "0.1.0"
 description = "Local GitHub repository tracing with a bundled interactive graph viewer."
 readme = "README.md"
@@ -26,14 +26,14 @@ api = ["fastapi>=0.115,<1", "uvicorn>=0.32,<1", "pyjwt[crypto]>=2.9,<3"]
 sentry = ["sentry-sdk[fastapi]>=2.0.0"]
 dev = [
     "pytest>=9,<10",
-    "grag-trace-viewer[adapter,examples,embeddings,graph,judge,api,backend]",
+    "graphweave[adapter,examples,embeddings,graph,judge,api,backend]",
 ]
 
 [project.scripts]
-graphrag = "graphrag.entry:main"
-graphrag-view = "graphrag.tracing.web:main"
-graphrag-github-trace = "graphrag.local_github:main"
-graphrag-backend = "graphrag.cli:main"
+graphweave = "graphrag.entry:main"
+graphweave-view = "graphrag.tracing.web:main"
+graphweave-github-trace = "graphrag.local_github:main"
+graphweave-backend = "graphrag.cli:main"
 
 # Source tests import src; the distribution installs these modules as graphrag.
 [tool.setuptools]

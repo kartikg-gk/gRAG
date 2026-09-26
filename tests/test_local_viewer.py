@@ -73,7 +73,7 @@ class LocalViewerTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             trace_file = save(sample_trace(), Path(temporary) / "trace.json")
             executable = Path(sys.executable).with_name(
-                "graphrag.exe" if sys.platform == "win32" else "graphrag"
+                "graphweave.exe" if sys.platform == "win32" else "graphweave"
             )
             command = [str(executable), str(trace_file), "--port", "0", "--no-browser"]
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

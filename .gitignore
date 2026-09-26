@@ -48,5 +48,6 @@ builds/
 # What `graphrag trace` writes by default.
 trace_out/
 graphrag_out/
+graphweave_out/
 .uv-cache/
 /frontend/.test-build/

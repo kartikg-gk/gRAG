@@ -63,7 +63,7 @@ def test_github_command_builds_viewable_v4_trace(tmp_path, monkeypatch):
 
     monkeypatch.setattr(local_github, "make_session", lambda: httpx.Client(
         base_url="https://api.github.com", transport=httpx.MockTransport(respond)))
-    destination = tmp_path / "graphrag_out" / "trace_state.json"
+    destination = tmp_path / "graphweave_out" / "trace_state.json"
     assert local_github.main(["octocat/Hello-World", "who fixed the cache timeout?",
                               "--out", str(destination)]) == 0
     assert len(calls) == 4

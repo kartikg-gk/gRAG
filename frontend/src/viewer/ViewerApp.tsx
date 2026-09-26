@@ -65,7 +65,7 @@ export function ViewerApp() {
     event.preventDefault(); const file = event.dataTransfer.files[0]; if (file) void readFile(file);
   }}>
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-panel px-5 py-4">
-      <div><h1 className="text-xl font-semibold tracking-tight">graphRAG <span className="font-normal text-ink-dim">/ trace viewer</span></h1><p className="text-xs text-ink-muted">Explore retrieval and execution locally</p></div>
+      <div><h1 className="text-xl font-semibold tracking-tight">graphweave <span className="font-normal text-ink-dim">/ trace viewer</span></h1><p className="text-xs text-ink-muted">Explore retrieval and execution locally</p></div>
       <button className="page-action" type="button" onClick={() => inputRef.current?.click()}><Upload size={16} /> Open JSON</button>
       <input ref={inputRef} className="hidden" type="file" accept=".json,application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void readFile(file); }} />
     </header>

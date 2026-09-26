@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BUILT = ROOT / "frontend" / "dist"
 DESTINATION = ROOT / "src" / "tracing" / "ui"
 BUILD_COPY = ROOT / "build" / "lib" / "graphrag" / "tracing" / "ui"
-SOURCE_LIST = ROOT / "grag_trace_viewer.egg-info" / "SOURCES.txt"
+SOURCE_LIST = ROOT / "graphweave.egg-info" / "SOURCES.txt"
 
 if not (BUILT / "viewer.html").is_file():
     raise SystemExit("Build the viewer first: npm --prefix frontend run build")

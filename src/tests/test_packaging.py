@@ -9,7 +9,7 @@ installed distribution.
 Why ``--no-deps``
 -----------------
 
-The install is deliberately dependency-free. ``graphrag-view`` reaches only
+The install is deliberately dependency-free. ``graphweave-view`` reaches only
 ``graphrag.tracing``, which is standard library only, so httpx and pydantic are
 not needed to prove the entry point works — and installing them here would buy
 nothing this suite does not already cover. That the metadata *declares* them is
@@ -127,7 +127,7 @@ def clean_install(tmp_path_factory, clean_checkout) -> Path:
 
 
 def test_the_console_command_renders_a_trace(clean_install):
-    command = script_path(clean_install, "graphrag-view")
+    command = script_path(clean_install, "graphweave-view")
 
     assert command.exists(), f"no console script at {command}"
 
@@ -152,7 +152,7 @@ def test_the_console_command_renders_a_trace(clean_install):
 
 def test_the_console_command_reports_a_missing_file_clearly(clean_install):
     result = subprocess.run(
-        [str(script_path(clean_install, "graphrag-view")), "no-such-file.json"],
+        [str(script_path(clean_install, "graphweave-view")), "no-such-file.json"],
         capture_output=True,
         text=True,
     )
@@ -165,13 +165,13 @@ def test_the_console_command_reports_a_missing_file_clearly(clean_install):
 def test_the_usage_line_names_the_installed_command(clean_install):
     """Not ``python -m src.tracing`` — a name the person cannot type."""
     result = subprocess.run(
-        [str(script_path(clean_install, "graphrag-view"))],
+        [str(script_path(clean_install, "graphweave-view"))],
         capture_output=True,
         text=True,
     )
 
     assert result.returncode == 2
-    assert "graphrag-view" in result.stderr
+    assert "graphweave-view" in result.stderr
 
 
 def test_the_installed_package_imports_under_its_distribution_name(clean_install):

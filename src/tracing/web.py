@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("viewer assets are missing from this installation")
         server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(runs))
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        print(f"graphrag-view: {exc}", file=sys.stderr)
+        print(f"graphweave-view: {exc}", file=sys.stderr)
         return 1
     address = f"http://127.0.0.1:{server.server_port}/"
     print(f"Viewing {len(runs)} trace(s) at {address}", flush=True)

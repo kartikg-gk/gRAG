@@ -39,20 +39,20 @@ result = graph.invoke(inputs, config={"callbacks": [tracer]})
 trace, path = save_run(tracer, query=inputs["query"], answer=result["answer"])
 ```
 
-Install `grag-trace-viewer[adapter]` for this adapter. `graphrag trace.json`
-or `graphrag directory/` opens the local viewer. `graphrag-view` is an alias;
+Install `graphweave[adapter]` for this adapter. `graphweave trace.json`
+or `graphweave directory/` opens the local viewer. `graphweave-view` is an alias;
 both accept `--port` and `--no-browser`. The viewer needs no backend service.
-For a repository-to-trace run, `graphrag-github-trace owner/repo "question"`
+For a repository-to-trace run, `graphweave-github-trace owner/repo "question"`
 fetches recent GitHub activity, builds an in-memory graph, and writes
-`graphrag_out/trace_state.json` in this v4 format. `GITHUB_TOKEN` is optional
+`graphweave_out/trace_state.json` in this v4 format. `GITHUB_TOKEN` is optional
 for public repositories and required for private repositories. This local
 command uses lexical graph retrieval and a cited extractive answer; it does
 not invoke the optional embedding model, graph database, or remote judge.
 Add `--source` to fetch a bounded sample of source files at HEAD and cite
 immutable commit URLs with line numbers. The default command examines recent
 activity only, so neither mode claims to search every file or all history.
-The separate `graphrag-backend` command retains the ingestion and graph memory
-platform. Install `grag-trace-viewer[backend,api,graph,embeddings,judge]` to
+The separate `graphweave-backend` command retains the ingestion and graph memory
+platform. Install `graphweave[backend,api,graph,embeddings,judge]` to
 run that advanced mode; none of those extras are needed for local trace viewing.
 
 For a static deployment, build `frontend/` and deploy `frontend/dist/`. Users

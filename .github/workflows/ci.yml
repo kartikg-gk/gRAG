@@ -34,8 +34,8 @@ jobs:
       - run: python -m build -o dist/
       - run: python tools/check_wheel.py dist/*.whl
       - run: python -m twine check dist/*
-      - run: graphrag-view --help
-      - run: graphrag-github-trace --help
+      - run: graphweave-view --help
+      - run: graphweave-github-trace --help
 
   frontend-build:
     runs-on: ubuntu-latest

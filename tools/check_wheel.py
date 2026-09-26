@@ -17,6 +17,6 @@ with ZipFile(wheel) as archive:
     if "graphrag/local_github.py" not in names:
         raise SystemExit(f"{wheel.name} lacks the local GitHub command")
     entry_points = next((name for name in names if name.endswith(".dist-info/entry_points.txt")), None)
-    if entry_points is None or "graphrag-github-trace" not in archive.read(entry_points).decode("utf-8"):
+    if entry_points is None or "graphweave-github-trace" not in archive.read(entry_points).decode("utf-8"):
         raise SystemExit(f"{wheel.name} lacks the GitHub CLI entry point")
     print(f"{wheel.name}: bundled HTML, JavaScript, and CSS present")

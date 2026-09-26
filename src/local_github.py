@@ -26,7 +26,7 @@ from .tracing import (
 )
 from .tracing._text import STOP, tokens
 
-DEFAULT_OUTPUT = Path("graphrag_out/trace_state.json")
+DEFAULT_OUTPUT = Path("graphweave_out/trace_state.json")
 ITEM_EXCERPT_CHARS = 500
 REPO_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 
@@ -166,7 +166,7 @@ def build_trace(repo: str, question: str, graph: GraphBuilder, documents,
     answer_ms = (time.perf_counter() - answer_began) * 1000
     total_ms = ingestion_ms + retrieval_ms + answer_ms
     trace = Trace(
-        query=question, answer=answer, producer="graphrag-local-github",
+        query=question, answer=answer, producer="graphweave-github",
         started_at=started_at, duration_ms=round(total_ms, 2),
         retrievals=[Retrieval(query=question, span_id="retrieve", arm="graph", items=items, edges=edges)],
         graph_nodes=items, graph_edges=edges,
@@ -237,11 +237,11 @@ def main(argv: list[str] | None = None) -> int:
                             source_metrics=source_metrics)
         destination = save(trace, args.out)
     except (GitHubError, OSError, ValueError) as exc:
-        print(f"graphrag-github-trace: {exc}", file=sys.stderr)
+        print(f"graphweave-github-trace: {exc}", file=sys.stderr)
         return 1
     print(trace.answer)
     print(f"Wrote {destination} (v4; {len(trace.items)} nodes, {len(trace.edges)} edges)")
-    print(f"View with: graphrag {destination}")
+    print(f"View with: graphweave {destination}")
     return 0
 
 

@@ -338,7 +338,7 @@ def _report(repository: str, stats) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="graphrag", description="Build and inspect a repository knowledge graph."
+        prog="graphweave-backend", description="Build and inspect a repository knowledge graph."
     )
     commands = parser.add_subparsers(dest="command")
 

@@ -16,9 +16,9 @@ Point it at any public GitHub repository and ask a question to see it work.
 ## Get started
 
 ```bash
-pip install grag-trace-viewer
-graphrag-github-trace psf/requests "What changed in how sessions handle retries?"
-graphrag graphrag_out/trace_state.json
+pip install graphweave
+graphweave-github-trace psf/requests "What changed in how sessions handle retries?"
+graphweave graphweave_out/trace_state.json
 ```
 
 The first command installs it. The second reads the repository's recent pull requests, issues and commits and saves what matches your question. The third opens the result in your browser at `http://127.0.0.1:4630`.
@@ -88,4 +88,4 @@ tests/           package and viewer tests
 | A message about GitHub's rate limit | Set a GitHub token in `GITHUB_TOKEN`, or wait an hour |
 | The browser doesn't open | Copy the address printed in the terminal into your browser |
 | "Address already in use" | Add `--port 4700` |
-| `graphrag` is not recognized | Reopen the terminal after installing |
+| `graphweave` is not recognized | Reopen the terminal after installing |
