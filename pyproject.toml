@@ -29,6 +29,10 @@ dev = [
     "graphweave[adapter,examples,embeddings,graph,judge,api,backend]",
 ]
 
+[project.urls]
+Homepage = "https://www.graphweave.online"
+Repository = "https://github.com/kartikg-gk/graphweave"
+
 [project.scripts]
 graphweave = "graphrag.entry:main"
 graphweave-view = "graphrag.tracing.web:main"

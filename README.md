@@ -6,7 +6,7 @@ graphweave shows both. It lays out everything a run retrieved as a map, then che
 
 Point it at any public GitHub repository and ask a question to see it work.
 
-![How graphweave works](arch.png)
+![How graphweave works](https://raw.githubusercontent.com/kartikg-gk/graphweave/main/arch.png)
 
 ## What you need
 
